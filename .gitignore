@@ -1,0 +1,30 @@
+# Build artifacts
+build/
+output/
+obj/
+libs/
+*.o
+*.a
+*.so
+*.bak
+*.tmp
+*.swp
+*~
+
+# IDE
+.vscode/
+.idea/
+*.iml
+.cxx/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cbp

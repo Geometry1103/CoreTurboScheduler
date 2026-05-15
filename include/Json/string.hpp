@@ -194,7 +194,7 @@ public:
         return *this;
     }
 
-    NODISCARD INLINE constexpr const_pointer data() const noexcept { return _impl; }
+    NODISCARD INLINE constexpr const_pointer data() const noexcept { return _impl ? _impl : ""; }
 
     NODISCARD INLINE constexpr size_type size() const noexcept { return _size; }
 
@@ -305,7 +305,14 @@ protected:
     template <class Iter1, class Iter2>
     INLINE constexpr void _assign(Iter1 begin, Iter2 end) {
         const size_type size = distance(begin, end);
-        // if (likely(size > 0)) {
+        // Fix: assigning "" to an unallocated string_t (_impl==nullptr, _capacity==0)
+        // caused `_impl[0] = '\0'` → null pointer write → SIGSEGV.
+        // When size==0 there is nothing to copy and no null-terminator to write;
+        // data()/c_str() already return "" when _impl is nullptr, so just update _size.
+        if (size == 0u) {
+            _size = 0u;
+            return;
+        }
         if (likely(size > capacity())) {
             _allocator().template deallocate<Char>(_impl, capacity());
             _impl = _allocator().template allocate<Char>(size + 1u);
@@ -314,7 +321,6 @@ protected:
         copy(begin, end, _impl);
         _impl[size] = '\0';
         _size = size;
-        // }
     }
 
 public:
@@ -420,9 +426,9 @@ public:
         }
     }
 
-    NODISCARD INLINE constexpr pointer data() noexcept { return _impl; }
+    NODISCARD INLINE constexpr pointer data() noexcept { return _impl ? _impl : const_cast<pointer>(""); }
 
-    NODISCARD INLINE constexpr const_pointer data() const noexcept { return _impl; }
+    NODISCARD INLINE constexpr const_pointer data() const noexcept { return _impl ? _impl : ""; }
 
     NODISCARD INLINE constexpr size_type size() const noexcept { return _size; }
 
