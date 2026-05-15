@@ -1,7 +1,7 @@
 {
     "meta": {
         "name": "hm",
-        "version": 70,
+        "version": 72,
         "author": "Ktwo",
         "loglevel": "INFO"
     },
@@ -18,12 +18,11 @@
             "foreground": "0-6",
             "restricted": "0-4",
             "system_background": "0-3",
-            "background": "0-1"
+            "background": "0-3"
         },
         "LaunchBoost": {
             "enable": false,
             "boost_rate_limit_ms": 35,
-            "boost_duration_ms": 2000,
             "BoostFreq": {
                 "c0": "1990000",
                 "c1": "2100000",
@@ -32,10 +31,14 @@
             }
         },
         "OfficialMode": {
-            "enable": true
+            "enable": false
         },
         "LoadBalancing": {
             "enable": true
+        },
+        "DisableGpuBoost": {
+            "enable": false,
+            "method": "auto"
         },
         "Scheduler": {
             "enable": true,
@@ -50,21 +53,30 @@
             "sched_util_clamp_max": "1024"
         },
         "GpuFreq": {
-            "enable": true
+            "enable": true,
+            "governor": "Default",
+            "power_policy": "coarse_demand"
         },
         "Stune": {
-            "enable": true,
-            "top_app_boost": "5",
+            "enable": false,
+            "top_app_boost": "1",
             "foreground_boost": "0",
-            "background_boost": "-5",
+            "background_boost": "-10",
             "top_app_prefer_idle": "1",
-            "foreground_prefer_idle": "1"
+            "foreground_prefer_idle": "0"
         },
         "IOScheduler": {
             "enable": true,
             "scheduler": "none",
-            "read_ahead_kb": "2048",
-            "nr_requests": "256"
+            "read_ahead_kb": "256",
+            "nr_requests": "128"
+        },
+        "Thermal": {
+            "enable": false,
+            "core_temp_thresh": "disabled",
+            "reduction_step": 10,
+            "poll_interval_ms": 2000,
+            "hysteresis_mc": 5000
         },
         "LoadPredict": {
             "enable": false,
@@ -84,51 +96,57 @@
                 220,
                 220,
                 240
-            ],
-            "alpha_up": 1.0,
-            "alpha_down": 0.15,
-            "cusum_k": 5.0,
-            "cusum_h": 25.0
+            ]
         }
     },
     "Switch": {
         "powersave": {
             "MinFreq": {
                 "c0": "300000",
-                "c1": "",
+                "c1": "300000",
                 "c2": "",
                 "c3": ""
             },
             "MaxFreq": {
-                "c0": "1600000",
-                "c1": "",
+                "c0": "2000000",
+                "c1": "3000000",
                 "c2": "",
                 "c3": ""
             },
             "idle": {
                 "MinFreq": {
                     "c0": "300000",
-                    "c1": ""
+                    "c1": "300000",
+                    "c2": "",
+                    "c3": ""
                 },
                 "MaxFreq": {
                     "c0": "1400000",
-                    "c1": "2100000"
+                    "c1": "2100000",
+                    "c2": "",
+                    "c3": ""
                 }
             },
             "heavy": {
                 "MinFreq": {
                     "c0": "800000",
-                    "c1": "1400000"
+                    "c1": "1400000",
+                    "c2": "",
+                    "c3": ""
                 },
                 "MaxFreq": {
-                    "c0": "1600000",
-                    "c1": "2100000"
+                    "c0": "2000000",
+                    "c1": "3000000",
+                    "c2": "",
+                    "c3": ""
                 }
             },
             "critical": {
                 "MaxFreq": {
-                    "c0": "1600000",
-                    "c1": "2100000"
+                    "c0": "2000000",
+                    "c1": "3000000",
+                    "c2": "",
+                    "c3": ""
                 }
             },
             "governor": {
@@ -254,8 +272,11 @@
                 "Core7": 0
             },
             "GpuFreq": {
-                "min_freq": "200",
+                "min_freq": "160",
                 "max_freq": "400"
+            },
+            "Thermal": {
+                "core_temp_thresh": "disabled"
             }
         },
         "balance": {
@@ -274,27 +295,37 @@
             "idle": {
                 "MinFreq": {
                     "c0": "300000",
-                    "c1": "700000"
+                    "c1": "700000",
+                    "c2": "",
+                    "c3": ""
                 },
                 "MaxFreq": {
                     "c0": "1600000",
-                    "c1": "2100000"
+                    "c1": "2100000",
+                    "c2": "",
+                    "c3": ""
                 }
             },
             "heavy": {
                 "MinFreq": {
                     "c0": "1200000",
-                    "c1": "1800000"
+                    "c1": "1800000",
+                    "c2": "",
+                    "c3": ""
                 },
                 "MaxFreq": {
                     "c0": "2100000",
-                    "c1": "2800000"
+                    "c1": "2800000",
+                    "c2": "",
+                    "c3": ""
                 }
             },
             "critical": {
                 "MaxFreq": {
                     "c0": "2100000",
-                    "c1": "2800000"
+                    "c1": "2800000",
+                    "c2": "",
+                    "c3": ""
                 }
             },
             "governor": {
@@ -421,7 +452,10 @@
             },
             "GpuFreq": {
                 "min_freq": "120",
-                "max_freq": "800"
+                "max_freq": "600"
+            },
+            "Thermal": {
+                "core_temp_thresh": "disabled"
             }
         },
         "performance": {
@@ -440,27 +474,37 @@
             "idle": {
                 "MinFreq": {
                     "c0": "1200000",
-                    "c1": "1200000"
+                    "c1": "1200000",
+                    "c2": "",
+                    "c3": ""
                 },
                 "MaxFreq": {
                     "c0": "3000000",
-                    "c1": "3500000"
+                    "c1": "3500000",
+                    "c2": "",
+                    "c3": ""
                 }
             },
             "heavy": {
                 "MinFreq": {
                     "c0": "1800000",
-                    "c1": "2400000"
+                    "c1": "2400000",
+                    "c2": "",
+                    "c3": ""
                 },
                 "MaxFreq": {
                     "c0": "5000000",
-                    "c1": "5000000"
+                    "c1": "5000000",
+                    "c2": "",
+                    "c3": ""
                 }
             },
             "critical": {
                 "MaxFreq": {
                     "c0": "5000000",
-                    "c1": "5000000"
+                    "c1": "5000000",
+                    "c2": "",
+                    "c3": ""
                 }
             },
             "governor": {
@@ -586,8 +630,11 @@
                 "Core7": 1
             },
             "GpuFreq": {
-                "min_freq": "120",
-                "max_freq": "1100"
+                "min_freq": "160",
+                "max_freq": "1200"
+            },
+            "Thermal": {
+                "core_temp_thresh": "disabled"
             }
         },
         "fast": {
@@ -606,27 +653,37 @@
             "idle": {
                 "MinFreq": {
                     "c0": "1200000",
-                    "c1": "1200000"
+                    "c1": "1200000",
+                    "c2": "",
+                    "c3": ""
                 },
                 "MaxFreq": {
                     "c0": "3000000",
-                    "c1": "3500000"
+                    "c1": "3500000",
+                    "c2": "",
+                    "c3": ""
                 }
             },
             "heavy": {
                 "MinFreq": {
                     "c0": "2000000",
-                    "c1": "2600000"
+                    "c1": "2600000",
+                    "c2": "",
+                    "c3": ""
                 },
                 "MaxFreq": {
                     "c0": "5000000",
-                    "c1": "5000000"
+                    "c1": "5000000",
+                    "c2": "",
+                    "c3": ""
                 }
             },
             "critical": {
                 "MaxFreq": {
                     "c0": "5000000",
-                    "c1": "5000000"
+                    "c1": "5000000",
+                    "c2": "",
+                    "c3": ""
                 }
             },
             "governor": {
@@ -664,8 +721,11 @@
                 "Core7": 1
             },
             "GpuFreq": {
-                "min_freq": "120",
+                "min_freq": "160",
                 "max_freq": "1200"
+            },
+            "Thermal": {
+                "core_temp_thresh": "disabled"
             }
         }
     },

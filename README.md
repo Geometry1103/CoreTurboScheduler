@@ -1,8 +1,102 @@
-# CpuTurboScheduler V3.0
+# CoreTurboScheduler V4.0 — Android AI Scheduling Framework
 [![C++](https://img.shields.io/badge/language-C++-%23f34b7d.svg?style=plastic)](https://en.wikipedia.org/wiki/C++)
-[![Android](https://img.shields.io/badge/platform-Android-0078d7.svg?style=plastic)](https://en.wikipedia.org/wiki/Android_(operating_system)) 
+[![Android](https://img.shields.io/badge/platform-Android-0078d7.svg?style=plastic)](https://en.wikipedia.org/wiki/Android_(operating_system))
 [![AArch64](https://img.shields.io/badge/arch-AArch64-red.svg?style=plastic)](https://en.wikipedia.org/wiki/AArch64)
 [![Android Support8-17](https://img.shields.io/badge/Android%208~17-Support-green)](https://img.shields.io/badge/Android%208~17-Support-green)
+
+> **V4.0 重大升级**：CTS 从「调频模块」演进为完整的 **Android AI Scheduling Framework**，
+> 与 Pixel Adaptive Scheduler、Trinity Engine、HyperOS Dynamic Engine 同代设计理念。
+
+## 框架架构
+
+```
+CTS AI Framework
+├── CoreScheduler         事件驱动 + 三线程（Monitor / Policy / Dispatch）
+├── LoadPredictor         非对称 EMA + UTIL_EST_FASTUP + CUSUM 变点检测 + 线性预测
+├── WorkloadClassifier    8 类场景识别（IDLE / UI / VIDEO / GAME / HEAVY_CPU / HEAVY_GPU / CAMERA / INSTALL）
+├── GPUTracker            跨厂商 GPU 占用率（Adreno / Mali / 通用 devfreq）
+├── ThermalEngine         温度趋势预测 + 4 档调控（BURST / NORMAL / LIMIT / COOL）
+├── FrameAnalyzer         RenderThread / SurfaceFlinger 卡顿评估
+├── UclampController      Android 13+ uclamp.min/max 场景预设
+├── EASPolicy             读取 cpu_capacity 构建能效模型，提供 cluster 推荐
+├── SmartBoost            5 类场景化 Boost（Touch / Launch / Frame / Binder / IO）+ max-merge
+├── OverrideManager       AI / SYSTEM / USER / THERMAL 四级控制权仲裁
+├── SysfsBatchWriter      dirtyFlag + mergeWrite + delayedApply，降低 sysfs 抖动
+├── WatchDog              多线程心跳 + 全局策略回滚
+└── ConfigManager         JSON + INI 双源 + 自动 SoC 检测 + 快照回滚
+```
+
+## 与传统调频的区别
+
+| 维度        | 传统调度          | CTS V4 AI 框架              |
+| ----------- | ----------------- | --------------------------- |
+| 频率控制    | 锁死阈值 / 调速器 | AI 决策 × 模式预设 × 场景叠加 |
+| 场景识别    | 仅前台/后台       | 8 类工作负载 + 滞回防抖     |
+| GPU 联动    | 独立调频          | CPU/GPU 联合负载决策        |
+| 热保护      | 触发即降频        | 趋势预测 + 提前降频         |
+| 帧率感知    | 无                | RenderThread / SF 监控      |
+| Uclamp      | 全局             | 按场景动态切换              |
+| 控制权      | 单源             | 4 级 owner 仲裁             |
+| sysfs 写入  | 每次直写         | 批量 + 去重 + 异步合并      |
+| 故障恢复    | 无               | WatchDog 心跳 + 策略回滚    |
+
+## AI 决策流程
+
+```
+采样 → Signal{cpu, gpu, frame, io, temp, camera, install}
+  ↓
+LoadPredictor.update()      → cpuLevel + 趋势预测
+WorkloadClassifier.classify() → 8 类场景
+ThermalEngine.push()        → 4 档建议 + 未来温度
+  ↓
+applyModePreset()  + applyWorkloadOverlay()  + applyThermalLimits()
+  ↓
+Decision{cpuMin/MaxScale, gpuMin/MaxScale, uclampMin/Max, boostStrength}
+  ↓
+SysfsBatchWriter.queue() → flush 一次写入
+```
+
+## 配置开关（Json/config.json）
+
+新增字段：
+
+```json
+"AI": {
+    "enabled": true,
+    "mode": "AUTO",            // AUTO/BATTERY/BALANCED/PERFORMANCE/GAMING
+    "dynamic_ema": true,
+    "smart_boost": true,
+    "cpu_gpu_link": true,
+    "thermal_prediction": true,
+    "frame_aware": false,
+    "learning": true
+},
+"Expert": {
+    "allow_manual_cpu": true,
+    "allow_manual_gpu": true,
+    "allow_sched_params": true,
+    "override_ai": true
+},
+"Scheduler": {
+    "event_priority": true,
+    "async_dispatch": true,
+    "sysfs_batch_write": true
+}
+```
+
+## 构建
+
+```bash
+# 使用 CMake + NDK
+export ANDROID_NDK=/path/to/android-ndk
+./build.sh arm64-v8a
+
+# 或使用 ndk-build
+ndk-build -C jni
+```
+
+---
+
 #### 介绍
 CPU Turbo Scheduler 是一款基于 C++ 编写的智能 CPU 调度工具 旨在优化 Android 设备的 CPU 性能和功耗表现而设计 通过智能调度算法 它可以根据不同的使用场景动态调整 CPU 频率以达到最佳的性能和能效平衡 <br>
 #### 工作条件

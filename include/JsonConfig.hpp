@@ -32,6 +32,13 @@ public:
         }
 
         getline(file, temp);
+        // Trim trailing whitespace and newlines
+        size_t end = temp.find_last_not_of(" \t\r\n");
+        if (end != std::string::npos) {
+            temp.erase(end + 1);
+        } else {
+            temp.clear();
+        }
         mode = std::move(temp);
 
         file.close();
@@ -44,6 +51,32 @@ public:
     }
 
     bool readConfig() {
+        // Clear all string_t to safe empty state before loading
+        for (int i = 0; i <= 3; i++) {
+            for (int j = 0; j <= 12; j++) {
+                this->schedParam[i].Name[j] = "";
+                this->schedParam[i].Value[j] = "";
+            }
+        }
+        Performances::MinFreq[0] = ""; Performances::MinFreq[1] = "";
+        Performances::MinFreq[2] = ""; Performances::MinFreq[3] = "";
+        Performances::MaxFreq[0] = ""; Performances::MaxFreq[1] = "";
+        Performances::MaxFreq[2] = ""; Performances::MaxFreq[3] = "";
+        Performances::CpuGovernor[0] = ""; Performances::CpuGovernor[1] = "";
+        Performances::CpuGovernor[2] = ""; Performances::CpuGovernor[3] = "";
+        LaunchBoost::BoostFreq[0] = ""; LaunchBoost::BoostFreq[1] = "";
+        LaunchBoost::BoostFreq[2] = ""; LaunchBoost::BoostFreq[3] = "";
+        Performances::Online[0] = 0; Performances::Online[1] = 0;
+        Performances::Online[2] = 0; Performances::Online[3] = 0;
+        Performances::Online[4] = 0; Performances::Online[5] = 0;
+        Performances::Online[6] = 0; Performances::Online[7] = 0;
+        GpuFreq::min_freq = "";
+        GpuFreq::max_freq = "";
+        Meta::name = "";
+        Meta::author = "";
+        Meta::loglevel = "";
+        IOScheduler::scheduler = "";
+
         ifstream ifs(configPath, std::ios::binary);
         if (!ifs) {
             logger.Error("无法打开json配置文件");
@@ -82,7 +115,7 @@ public:
                 #endif
             }
         } catch (const qlib::exception& e) {
-            logger.Error("Meta节点异常 错误消息: %d", e.what());
+            logger.Error("Meta节点异常 错误消息: %s", e.what());
         }
 
         try {
@@ -135,13 +168,6 @@ public:
                 logger.Debug("LoadBalancing 开关: %s", LoadBanlace::enable ? "开启" : "关闭"); 
             #endif
 
-            auto& DisableGpuBoost = json["Function"]["DisableGpuBoost"];
-            DisableGpuBoost::enable = DisableGpuBoost["enable"].get<bool>();
-
-            #if DEBUG_DURATION
-                logger.Debug("DisableGpuBoost 开关: %s", DisableGpuBoost::enable ? "开启" : "关闭");
-            #endif
-
             auto& Scheduler = json["Function"]["Scheduler"];
             Scheduler::enable = Scheduler["enable"].get<bool>();
             Scheduler::Sched_energy_aware = Scheduler["sched_energy_aware"].get<bool>();
@@ -166,8 +192,46 @@ public:
                 logger.Debug("Sched_util_clamp_min: %s", Scheduler::Sched_util_clamp_min.c_str());
                 logger.Debug("Sched_util_clamp_max: %s", Scheduler::Sched_util_clamp_max.c_str());
             #endif
+
+            auto& IOSched = json["Function"]["IOScheduler"];
+            IOScheduler::enable = IOSched["enable"].get<bool>();
+            IOScheduler::scheduler = IOSched["scheduler"].get<string_t>();
+            IOScheduler::read_ahead_kb = IOSched["read_ahead_kb"].get<string_t>();
+            IOScheduler::nr_requests = IOSched["nr_requests"].get<string_t>();
+
+            #if DEBUG_DURATION
+                logger.Debug("IOScheduler 总开关: %s", IOScheduler::enable ? "开启" : "关闭");
+                logger.Debug("IOScheduler scheduler: %s", IOScheduler::scheduler.c_str());
+                logger.Debug("IOScheduler read_ahead_kb: %s", IOScheduler::read_ahead_kb.c_str());
+                logger.Debug("IOScheduler nr_requests: %s", IOScheduler::nr_requests.c_str());
+            #endif
+
+            auto& GpuFreq = json["Function"]["GpuFreq"];
+            GpuFreq::enable = GpuFreq["enable"].get<bool>();
+
+            #if DEBUG_DURATION
+                logger.Debug("GpuFreq 总开关: %s", GpuFreq::enable ? "开启" : "关闭");
+            #endif
+
+            auto& StuneConfig = json["Function"]["Stune"];
+            Stune::enable = StuneConfig["enable"].get<bool>();
+            Stune::top_app_boost = StuneConfig["top_app_boost"].get<string_t>();
+            Stune::foreground_boost = StuneConfig["foreground_boost"].get<string_t>();
+            Stune::background_boost = StuneConfig["background_boost"].get<string_t>();
+            Stune::top_app_prefer_idle = StuneConfig["top_app_prefer_idle"].get<string_t>();
+            Stune::foreground_prefer_idle = StuneConfig["foreground_prefer_idle"].get<string_t>();
+
+            #if DEBUG_DURATION
+                logger.Debug("Stune 总开关: %s", Stune::enable ? "开启" : "关闭");
+                logger.Debug("Stune top_app_boost: %s", Stune::top_app_boost.c_str());
+                logger.Debug("Stune foreground_boost: %s", Stune::foreground_boost.c_str());
+                logger.Debug("Stune background_boost: %s", Stune::background_boost.c_str());
+                logger.Debug("Stune top_app_prefer_idle: %s", Stune::top_app_prefer_idle.c_str());
+                logger.Debug("Stune foreground_prefer_idle: %s", Stune::foreground_prefer_idle.c_str());
+            #endif
+
         } catch (const qlib::exception& e) {
-            logger.Error("Function节点异常 错误消息: %d", e.what());
+            logger.Error("Function节点异常: %s", e.what());
         }
 
         LoadConfig();
@@ -178,14 +242,12 @@ public:
         }
         
         if (!switchConfig()) {
-            logger.Error("情景模式异常 当前情景模式: %s", mode.c_str());
+            logger.Error("情景模式异常 当前情景模式: '%s'", mode.c_str());
             return false;
         }
         
         try {
-            #if DEBUG_DURATION
-                logger.Debug("当前性能模式: %s", mode.c_str());
-            #endif
+            logger.Info("当前性能模式: %s", mode.c_str());
 
             auto& Switch = json["Switch"][mode.c_str()];
             for (int i = 0; i <= 3; i++) {
@@ -194,55 +256,49 @@ public:
                 auto& MaxFreq = Performances::MaxFreq[i] = Switch["MaxFreq"][buff].get<string_t>();
                 auto& CpuGovernor = Performances::CpuGovernor[i] = Switch["governor"][buff].get<string_t>();
                 if (MinFreq.empty() || MaxFreq.empty() || CpuGovernor.empty()) continue;
-                #if DEBUG_DURATION
-                    logger.Debug("CPU簇: %d 最小频率: %s 最大频率: %s 调速器: %s", 
-                        Policy::CpuPolicy[i], Performances::MinFreq[i].c_str(), 
-                            Performances::MaxFreq[i].c_str(), Performances::CpuGovernor[i].c_str());
-                #endif
+                logger.Info("CPU簇: %d 最小频率: %s 最大频率: %s 调速器: %s", 
+                    Policy::CpuPolicy[i], Performances::MinFreq[i].c_str(), 
+                        Performances::MaxFreq[i].c_str(), Performances::CpuGovernor[i].c_str());
             }
-
-            #if DEBUG_DURATION
-                logger.Debug("---------核心管理---------");
-            #endif
 
             for (int i = 0; i <= 7; i++) {
                 FastSnprintf(buff, sizeof(buff), "Core%d", i);
                 Performances::Online[i] = Switch["CoreOnline"][buff].get<int>();
-
-                #if DEBUG_DURATION
-                    logger.Debug("核心: %d %s", i, Performances::Online[i] ? "开启" : "关闭");
-                #endif
+                logger.Debug("核心: %d %s", i, Performances::Online[i] ? "开启" : "关闭");
             }
-
-            #if DEBUG_DURATION
-                logger.Debug("---------调速器参数---------");
-            #endif 
             
             for (int i = 0; i <= 3; i++) {
                 FastSnprintf(cluster, sizeof(cluster), "c%d", i);
-                for (int j = 1; j <= 12; j++) {
-                    FastSnprintf(buff, sizeof(buff), "Path%d", j);
-                    auto name = Switch["SchedParam"][cluster][buff].get<string_t>();
-                    if(name.empty()) continue;
+                try {
+                    auto& sp = Switch["SchedParam"][cluster];
+                    for (int j = 1; j <= 12; j++) {
+                        FastSnprintf(buff, sizeof(buff), "Path%d", j);
+                        auto name = sp[buff].get<string_t>();
+                        if (name.empty()) continue;
 
-                    FastSnprintf(buff, sizeof(buff), "value%d", j);
-                    auto value = Switch["SchedParam"][cluster][buff].get<string_t>();
-                    if (value.empty()) continue;
+                        FastSnprintf(buff, sizeof(buff), "value%d", j);
+                        auto value = sp[buff].get<string_t>();
+                        if (value.empty()) continue;
 
-                    schedParam[i].Name[j] = name;
-                    schedParam[i].Value[j] = value;
-
-                    #if DEBUG_DURATION
-                        logger.Debug("CPU簇: %d 调速器参数: %d 名称: %s 值: %s", 
-                            Policy::CpuPolicy[i], j, schedParam[i].Name[j].c_str(), 
-                                schedParam[i].Value[j].c_str());
-                    #endif
+                        schedParam[i].Name[j] = name;
+                        schedParam[i].Value[j] = value;
+                    }
+                } catch (...) {
+                    // SchedParam cluster not found, skip
                 }
             }
+
+            auto& GpuFreqSwitch = Switch["GpuFreq"];
+            GpuFreq::min_freq = GpuFreqSwitch["min_freq"].get<string_t>();
+            GpuFreq::max_freq = GpuFreqSwitch["max_freq"].get<string_t>();
+
+            logger.Info("GPU min_freq: %s  max_freq: %s", 
+                GpuFreq::min_freq.c_str(), GpuFreq::max_freq.c_str());
         } catch (const qlib::exception& e) {
-            logger.Error("情景模式异常 错误消息: %d", e.what());
+            logger.Error("情景模式异常: %s", e.what());
+            return false;
         }
-        
+
         return true;
     }
 };

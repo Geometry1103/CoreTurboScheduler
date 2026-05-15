@@ -29,10 +29,11 @@
 #include <mutex>
 #include <atomic>
 #include <memory>
-#include <format>
 #include "LibUtils.hpp"
 #include "Json/string.hpp"
 
+// Build configuration
+#define DEBUG_DURATION 0
 #define MAX_PKG_LEN 128
 #define MAX_THREAD_LEN 128
 #define CPU_POLICY 8 
@@ -57,32 +58,66 @@ using std::make_unique;
 using std::to_string;
 using std::move;
 
+enum class LOG_LEVEL : uint32_t {
+    DEBUG = 0,
+    INFO = 1,
+    WARN = 2,
+    ERROR = 3,
+};
 
 class Utils {
 private:
     static constexpr const char* thermalPath = "/sys/class/thermal";
     static constexpr int maxBucketSize = 32;
+    std::mutex cacheMutex;
+    std::unordered_map<std::string,std::string> writeCache;
 public:
+    bool CachedWrite(const std::string& path, const std::string& value) noexcept {
+        if (path.empty() || value.empty()) return false;
+        {
+            std::lock_guard<std::mutex> lock(cacheMutex);
+            auto it = writeCache.find(path);
+            if(it != writeCache.end() && it->second == value) {
+                return true;
+            }
+            writeCache[path] = value;
+        }
+        FileWrite(path, value);
+        return true;
+    }
+
+    void ClearCache(const std::string& path) {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        writeCache.erase(path);
+    }
+
+    void ClearAllCache() {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        writeCache.clear();
+    }
+
     void FileWrite(const char* filePath, const char* content) noexcept {
-        int fd = open(filePath, O_WRONLY | O_NONBLOCK, 0666);
+        int fd = open(filePath, O_WRONLY | O_CLOEXEC | O_NONBLOCK, 0666);
 
         if (fd < 0) {
             chmod(filePath, 0666);
-            fd = open(filePath, O_WRONLY | O_CREAT | O_NONBLOCK); 
+            fd = open(filePath, O_WRONLY | O_CLOEXEC | O_CREAT | O_NONBLOCK); 
         }
 
         if (fd >= 0) {
             write(fd, content, Faststrlen(content));
             close(fd);
+            chmod(filePath, 0444);
         }
     }
+
     
     void FileWrite(const string& filePath, const string& content) noexcept {
-        int fd = open(filePath.c_str(), O_WRONLY | O_NONBLOCK);
+        int fd = open(filePath.c_str(), O_WRONLY | O_CLOEXEC | O_NONBLOCK);
 
         if (fd < 0) {
             chmod(filePath.c_str(), 0666);
-            fd = open(filePath.c_str(), O_WRONLY | O_CREAT | O_NONBLOCK); 
+            fd = open(filePath.c_str(), O_WRONLY | O_CLOEXEC | O_CREAT | O_NONBLOCK); 
         }
 
         if (fd >= 0) {
@@ -94,22 +129,36 @@ public:
 
         
     void FileWrite(const char* filePath, const string_t& content) noexcept {
-        int fd = open(filePath, O_WRONLY | O_NONBLOCK);
+        int fd = open(filePath, O_WRONLY | O_CLOEXEC | O_NONBLOCK);
 
         if (fd < 0) {
             chmod(filePath, 0666);
-            fd = open(filePath, O_WRONLY | O_CREAT | O_NONBLOCK); 
+            fd = open(filePath, O_WRONLY | O_CLOEXEC | O_CREAT | O_NONBLOCK); 
         }
 
         if (fd >= 0) {
             write(fd, content.data(), content.size());
             close(fd);
+            chmod(filePath, 0444);
         }
     }
 
 
     void WriteFile(const char* filePath, const char* content) noexcept {
-        int fd = open(filePath, O_WRONLY | O_TRUNC | O_CREAT, 0666); 
+        int fd = open(filePath, O_WRONLY | O_TRUNC | O_CREAT, 0666);
+
+        if (fd < 0) {
+            // Try to create parent directories
+            char pathCopy[256];
+            strncpy(pathCopy, filePath, sizeof(pathCopy) - 1);
+            pathCopy[sizeof(pathCopy) - 1] = '\0';
+            char* lastSlash = strrchr(pathCopy, '/');
+            if (lastSlash && lastSlash != pathCopy) {
+                *lastSlash = '\0';
+                mkdirRecursive(pathCopy);
+            }
+            fd = open(filePath, O_WRONLY | O_TRUNC | O_CREAT, 0666);
+        }
 
         if (fd >= 0) {
             write(fd, content, Faststrlen(content));
@@ -188,9 +237,10 @@ public:
     void WriteInt(const char* path, int value) noexcept {
         auto fd = open(path, O_WRONLY);
         if (fd < 0) {
-            chmod(path,0666);
+            chmod(path, 0666);
             fd = open(path, O_WRONLY);
         }
+        if (fd < 0) return;  // Fix: 两次 open 均失败时直接返回，避免 write(-1,...) UB
 
         char tmp[16];
         auto len = FastSnprintf(tmp, sizeof(tmp), "%d", value);
@@ -313,14 +363,9 @@ public:
             }
         }
 
+        char name[PROP_NAME_MAX] = { 0 };
         char res[PROP_VALUE_MAX] = { 0 };
-        __system_property_read_callback(pi,
-            [](void* cookie, const char*, const char* value, unsigned) {
-                if (value[0])
-                    strncpy((char*)cookie, value, PROP_VALUE_MAX);
-                else  ((char*)cookie)[0] = 0;
-            },
-            res);
+        __system_property_read(pi, name, res);
 
         return res[0] ? res[0] - '0' : -1;
     }
@@ -415,53 +460,97 @@ public:
     }
     
     string getActivity() {
-        char str[256];
+        char str[256] = { 0 };  // Fix: 初始化，防止 popen 失败时读垃圾内存
         popenShell("dumpsys window | grep mCurrentFocus", str, sizeof(str));
         if (strstr(str, "mCurrentFocus=null")) return "null";
-        const char* ptr = strstr(str, "/") + 1;
+
+        // Fix: strstr/strchr 返回 nullptr 时直接 +offset 会 segfault，必须先判空
+        const char* slash = strstr(str, "/");
+        if (!slash) return "null";
+        const char* ptr = slash + 1;
+
         const char* end_pos = strchr(ptr, '}');
+        if (!end_pos) return "null";
 
         char activity[256];
-        memcpy(activity, ptr, end_pos - ptr);
-        activity[end_pos - ptr] = '\0';
+        ptrdiff_t len = end_pos - ptr;
+        if (len <= 0 || len >= (ptrdiff_t)sizeof(activity)) return "null";
+        memcpy(activity, ptr, len);
+        activity[len] = '\0';
         return string(activity);
     }
 
     string getTopApp() {
-        char data[256];
+        char data[256] = { 0 };  // Fix: 初始化，防止 popen 失败时读垃圾内存
         popenShell("dumpsys window | grep mCurrentFocus", data, sizeof(data));
         if (strstr(data, "mCurrentFocus=null")) return "null";
-        const char* ptr = strstr(data, "u0") + 3;
+
+        // Fix: strstr/strchr 返回 nullptr 时直接 +offset 会 segfault，必须先判空
+        const char* u0pos = strstr(data, "u0");
+        if (!u0pos) return "null";
+        const char* ptr = u0pos + 3;
+
         const char* end_pos = strchr(ptr, '/');
+        if (!end_pos) return "null";
 
         char temp[256];
-        memcpy(temp, ptr, end_pos - ptr);
-        temp[end_pos - ptr] = '\0';
+        ptrdiff_t len = end_pos - ptr;
+        if (len <= 0 || len >= (ptrdiff_t)sizeof(temp)) return "null";
+        memcpy(temp, ptr, len);
+        temp[len] = '\0';
         return string(temp);
     }
 
     size_t popenRead(const char* cmd, char* buf, size_t len) {
         auto fp = popen(cmd, "r");
         if (!fp) return 0;
-        auto readLen = fread(buf, 1, len, fp);
+        // Leave 1 byte for null terminator to prevent strtok/printf overflow
+        auto readLen = fread(buf, 1, len - 1, fp);
         pclose(fp);
+        buf[readLen] = '\0';  // CRITICAL: null-terminate to prevent buffer overflow
         return readLen;
     }
     
     size_t readString(const char* path, char* buff, const size_t maxLen) {
-        auto fd = open(path, O_RDONLY);
-        if (fd <= 0) {
+        if (!path || !buff || maxLen == 0) return 0;
+        auto fd = open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) {
             buff[0] = 0;
             return 0;
         }
-        ssize_t len = read(fd, buff, maxLen);
+        ssize_t len = read(fd, buff, maxLen - 1);
         close(fd);
         if (len <= 0) {
             buff[0] = 0;
             return 0;
         }
-        buff[len] = 0; 
+        buff[len] = 0;
+        for (ssize_t i = len - 1; i >= 0; i--) {
+            if (buff[i] == '\n' || buff[i] == '\r' || buff[i] == ' ' || buff[i] == '\t') {
+                buff[i] = '\0';
+            } else break;
+        }
         return (size_t)(len);
+    }
+
+    bool mkdirRecursive(const char* dirPath) {
+        if (!dirPath) return false;
+        char tmp[256];
+        strncpy(tmp, dirPath, sizeof(tmp) - 1);
+        tmp[sizeof(tmp) - 1] = '\0';
+        size_t len = strlen(tmp);
+        if (len == 0) return false;
+        if (tmp[len - 1] == '/') tmp[len - 1] = '\0';
+
+        for (char* p = tmp + 1; *p; p++) {
+            if (*p == '/') {
+                *p = '\0';
+                mkdir(tmp, 0777);
+                *p = '/';
+            }
+        }
+        mkdir(tmp, 0777);
+        return access(tmp, F_OK) == 0;
     }
 private: 
     bool checkSensorPath(const char* str) {
