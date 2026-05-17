@@ -1,19 +1,19 @@
 {
     "meta": {
         "name": "std",
-        "version": 2,
+        "version": "2",
         "author": "Ktwo",
         "loglevel": "INFO"
     },
     "Policy": {
-        "c0": 0,
-        "c1": 4,
-        "c2": -1,
-        "c3": -1
+        "c0": "0",
+        "c1": "4",
+        "c2": "-1",
+        "c3": "-1"
     },
     "Function": {
         "Cpuset": {
-            "enable": true,
+            "enable": "true",
             "top_app": "0-7",
             "foreground": "0-7",
             "restricted": "0-3",
@@ -21,11 +21,11 @@
             "background": "0-1"
         },
         "LoadBalancing": {
-            "enable": true
+            "enable": "true"
         },
         "LaunchBoost": {
-            "enable": false,
-            "boost_rate_limit_ms": 50,
+            "enable": "false",
+            "boost_rate_limit_ms": "50",
             "BoostFreq": {
                 "c0": "1200000",
                 "c1": "1800000",
@@ -34,12 +34,12 @@
             }
         },
         "DisableGpuBoost": {
-            "enable": false
+            "enable": "false"
         },
         "Scheduler": {
-            "enable": true,
-            "sched_energy_aware": true,
-            "sched_schedstats": false,
+            "enable": "true",
+            "sched_energy_aware": "true",
+            "sched_schedstats": "false",
             "sched_latency_ns": "",
             "sched_migration_cost_ns": "5000000",
             "sched_min_granularity_ns": "600000",
@@ -49,15 +49,15 @@
             "sched_util_clamp_max": "1024"
         },
         "OfficialMode": {
-            "enable": false
+            "enable": "false"
         },
         "GpuFreq": {
-            "enable": true,
+            "enable": "true",
             "governor": "Default",
             "power_policy": "coarse_demand"
         },
         "Stune": {
-            "enable": false,
+            "enable": "false",
             "top_app_boost": "1",
             "foreground_boost": "0",
             "background_boost": "-10",
@@ -65,21 +65,21 @@
             "foreground_prefer_idle": "0"
         },
         "Thermal": {
-            "enable": false,
+            "enable": "false",
             "core_temp_thresh": "disabled",
-            "reduction_step": 10,
-            "poll_interval_ms": 2000,
-            "hysteresis_mc": 5000
+            "reduction_step": "10",
+            "poll_interval_ms": "2000",
+            "hysteresis_mc": "5000"
         },
         "LoadPredict": {
-            "enable": false,
-            "alpha": 0.2,
-            "sample_interval_ms": 100,
-            "idle_threshold": 20.0,
-            "heavy_threshold": 70.0,
-            "critical_threshold": 95.0,
-            "buffer_count": 10,
-            "predict_thd": 0.3,
+            "enable": "false",
+            "alpha": "0.2",
+            "sample_interval_ms": "100",
+            "idle_threshold": "20.0",
+            "heavy_threshold": "70.0",
+            "critical_threshold": "95.0",
+            "buffer_count": "10",
+            "predict_thd": "0.3",
             "efficiency": [
                 120,
                 120,
@@ -92,130 +92,76 @@
             ]
         },
         "IOScheduler": {
-            "enable": true,
+            "enable": "true",
             "scheduler": "none",
             "iostats": "0",
             "nomerges": "0",
             "read_ahead_kb": "256"
         }
     },
-    "Switch": {
-        "powersave": {
-            "MinFreq": {
-                "c0": "300000",
-                "c1": "300000",
-                "c2": "",
-                "c3": ""
-            },
-            "MaxFreq": {
-                "c0": "1200000",
-                "c1": "1600000",
-                "c2": "",
-                "c3": ""
-            },
-            "idle": {
-                "MinFreq": {
-                    "c0": "300000",
-                    "c1": "300000",
-                    "c2": "",
-                    "c3": ""
-                },
-                "MaxFreq": {
-                    "c0": "800000",
-                    "c1": "1200000",
-                    "c2": "",
-                    "c3": ""
+    "AI": {
+        "enabled": "true",
+        "mode": "AUTO",
+        "dynamic_ema": "true",
+        "smart_boost": "true",
+        "cpu_gpu_link": "true",
+        "thermal_prediction": "true",
+        "frame_aware": "false",
+        "learning": "true"
+    },
+    "Expert": {
+        "allow_manual_cpu": "true",
+        "allow_manual_gpu": "true",
+        "allow_sched_params": "true",
+        "override_ai": "true"
+    },
+    "Scheduler": {
+        "event_priority": "true",
+        "async_dispatch": "true",
+        "sysfs_batch_write": "true"
+    },
+    "models": [
+        {
+            "model_name": "powersave",
+            "is_game": "false",
+            "packages": [],
+            "freq_min_c0": "300000",
+            "freq_max_c0": "2000000",
+            "freq_min_c1": "0",
+            "freq_max_c1": "0",
+            "gpu_min_mhz": "0",
+            "gpu_max_mhz": "500",
+            "gov_c0": {
+                "governor": "walt",
+                "params": {
+                    "hispeed_freq": "787200",
+                    "hispeed_load": "95",
+                    "pl": "0",
+                    "rtg_boost_freq": "0"
                 }
             },
-            "heavy": {
-                "MinFreq": {
-                    "c0": "600000",
-                    "c1": "1000000",
-                    "c2": "",
-                    "c3": ""
-                },
-                "MaxFreq": {
-                    "c0": "1200000",
-                    "c1": "1600000",
-                    "c2": "",
-                    "c3": ""
+            "gov_c1": {
+                "governor": "walt",
+                "params": {
+                    "hispeed_freq": "883200",
+                    "hispeed_load": "95",
+                    "pl": "0",
+                    "rtg_boost_freq": "0"
                 }
             },
-            "critical": {
-                "MaxFreq": {
-                    "c0": "1200000",
-                    "c1": "1600000",
-                    "c2": "",
-                    "c3": ""
-                }
-            },
-            "governor": {
-                "c0": "conservative",
-                "c1": "conservative",
-                "c2": "conservative",
-                "c3": "conservative"
-            },
-            "SchedParam": {
-                "c0": {
-                    "Path1": "adaptive_high_freq",
-                    "value1": "0",
-                    "Path2": "adaptive_low_freq",
-                    "value2": "0",
-                    "Path3": "boost",
-                    "value3": "0",
-                    "Path4": "down_rate_limit_us",
-                    "value4": "20000",
-                    "Path5": "hispeed_freq",
-                    "value5": "600000",
-                    "Path6": "hispeed_load",
-                    "value6": "98",
-                    "Path7": "pl",
-                    "value7": "0",
-                    "Path8": "rtg_boost_freq",
-                    "value8": "0",
-                    "Path9": "zone_max_util_pct",
-                    "value9": "1200000 90",
-                    "Path10": "adaptive_level_1",
-                    "value10": "0",
-                    "Path11": "hispeed_cond_freq",
-                    "value11": "0",
-                    "Path12": "up_rate_limit_us",
-                    "value12": "20000"
+            "mode": "powersave",
+            "Scenes": {
+                "Standby": {
+                    "freq_max_c0": "600000",
+                    "freq_max_c1": "800000"
                 },
-                "c1": {
-                    "Path1": "adaptive_high_freq",
-                    "value1": "0",
-                    "Path2": "adaptive_low_freq",
-                    "value2": "0",
-                    "Path3": "boost",
-                    "value3": "0",
-                    "Path4": "down_rate_limit_us",
-                    "value4": "20000",
-                    "Path5": "hispeed_freq",
-                    "value5": "800000",
-                    "Path6": "hispeed_load",
-                    "value6": "95",
-                    "Path7": "pl",
-                    "value7": "0",
-                    "Path8": "rtg_boost_freq",
-                    "value8": "0",
-                    "Path9": "zone_max_util_pct",
-                    "value9": "1600000 90",
-                    "Path10": "adaptive_level_1",
-                    "value10": "0",
-                    "Path11": "hispeed_cond_freq",
-                    "value11": "0",
-                    "Path12": "up_rate_limit_us",
-                    "value12": "20000"
+                "HeavyLoad": {
+                    "freq_max_c0": "1600000",
+                    "freq_max_c1": "1800000"
                 },
-                "c2": {
-                    "Path1": "0",
-                    "value1": "0"
-                },
-                "c3": {
-                    "Path1": "0",
-                    "value1": "0"
-                }
+                "AmSwitch": {},
+                "Touch": {},
+                "None": {}
             },
             "CoreOnline": {
                 "Core0": 1,
@@ -226,130 +172,223 @@
                 "Core5": 1,
                 "Core6": 0,
                 "Core7": 0
-            },
-            "GpuFreq": {
-                "min_freq": "120",
-                "max_freq": "400"
-            },
-            "Thermal": {
-                "core_temp_thresh": "disabled"
             }
         },
-        "balance": {
-            "MinFreq": {
-                "c0": "300000",
-                "c1": "700000",
-                "c2": "",
-                "c3": ""
-            },
-            "MaxFreq": {
-                "c0": "2000000",
-                "c1": "2800000",
-                "c2": "",
-                "c3": ""
-            },
-            "idle": {
-                "MinFreq": {
-                    "c0": "300000",
-                    "c1": "700000",
-                    "c2": "",
-                    "c3": ""
-                },
-                "MaxFreq": {
-                    "c0": "1400000",
-                    "c1": "2100000",
-                    "c2": "",
-                    "c3": ""
+        {
+            "model_name": "balance",
+            "is_game": "false",
+            "packages": [],
+            "freq_min_c0": "300000",
+            "freq_max_c0": "2100000",
+            "freq_min_c1": "700000",
+            "freq_max_c1": "2400000",
+            "gpu_min_mhz": "0",
+            "gpu_max_mhz": "600",
+            "gov_c0": {
+                "governor": "walt",
+                "params": {
+                    "hispeed_freq": "1248000",
+                    "hispeed_load": "90",
+                    "pl": "0",
+                    "rtg_boost_freq": "787200"
                 }
             },
-            "heavy": {
-                "MinFreq": {
-                    "c0": "1000000",
-                    "c1": "1600000",
-                    "c2": "",
-                    "c3": ""
-                },
-                "MaxFreq": {
-                    "c0": "2000000",
-                    "c1": "2800000",
-                    "c2": "",
-                    "c3": ""
+            "gov_c1": {
+                "governor": "walt",
+                "params": {
+                    "hispeed_freq": "1382400",
+                    "hispeed_load": "90",
+                    "pl": "0",
+                    "rtg_boost_freq": "883200"
                 }
             },
-            "critical": {
-                "MaxFreq": {
-                    "c0": "2000000",
-                    "c1": "2800000",
-                    "c2": "",
-                    "c3": ""
+            "mode": "balance",
+            "Scenes": {
+                "Standby": {
+                    "freq_max_c0": "800000",
+                    "freq_max_c1": "1100000"
+                },
+                "HeavyLoad": {
+                    "freq_max_c0": "2400000",
+                    "freq_max_c1": "2800000"
+                },
+                "AmSwitch": {},
+                "Touch": {},
+                "None": {}
+            },
+            "CoreOnline": {
+                "Core0": 1,
+                "Core1": 1,
+                "Core2": 1,
+                "Core3": 1,
+                "Core4": 1,
+                "Core5": 1,
+                "Core6": 1,
+                "Core7": 0
+            }
+        },
+        {
+            "model_name": "performance",
+            "is_game": "false",
+            "packages": [],
+            "freq_min_c0": "600000",
+            "freq_max_c0": "2400000",
+            "freq_min_c1": "900000",
+            "freq_max_c1": "2800000",
+            "gpu_min_mhz": "0",
+            "gpu_max_mhz": "1200",
+            "gov_c0": {
+                "governor": "walt",
+                "params": {
+                    "hispeed_freq": "1670400",
+                    "hispeed_load": "85",
+                    "pl": "1",
+                    "rtg_boost_freq": "998400"
                 }
             },
-            "governor": {
-                "c0": "walt",
-                "c1": "walt",
-                "c2": "walt",
-                "c3": "walt"
+            "gov_c1": {
+                "governor": "walt",
+                "params": {
+                    "hispeed_freq": "1747200",
+                    "hispeed_load": "85",
+                    "pl": "1",
+                    "rtg_boost_freq": "1017600"
+                }
             },
-            "SchedParam": {
-                "c0": {
-                    "Path1": "adaptive_high_freq",
-                    "value1": "0",
-                    "Path2": "adaptive_low_freq",
-                    "value2": "0",
-                    "Path3": "boost",
-                    "value3": "0",
-                    "Path4": "down_rate_limit_us",
-                    "value4": "0",
-                    "Path5": "hispeed_freq",
-                    "value5": "1000000",
-                    "Path6": "hispeed_load",
-                    "value6": "90",
-                    "Path7": "pl",
-                    "value7": "0",
-                    "Path8": "rtg_boost_freq",
-                    "value8": "700000",
-                    "Path9": "zone_max_util_pct",
-                    "value9": "1800000 85",
-                    "Path10": "adaptive_level_1",
-                    "value10": "0",
-                    "Path11": "hispeed_cond_freq",
-                    "value11": "800000",
-                    "Path12": "up_rate_limit_us",
-                    "value12": "0"
+            "mode": "performance",
+            "Scenes": {
+                "Standby": {
+                    "freq_max_c0": "1200000",
+                    "freq_max_c1": "1500000"
                 },
-                "c1": {
-                    "Path1": "adaptive_high_freq",
-                    "value1": "0",
-                    "Path2": "adaptive_low_freq",
-                    "value2": "0",
-                    "Path3": "boost",
-                    "value3": "0",
-                    "Path4": "down_rate_limit_us",
-                    "value4": "0",
-                    "Path5": "hispeed_freq",
-                    "value5": "1600000",
-                    "Path6": "hispeed_load",
-                    "value6": "85",
-                    "Path7": "pl",
-                    "value7": "0",
-                    "Path8": "rtg_boost_freq",
-                    "value8": "800000",
-                    "Path9": "zone_max_util_pct",
-                    "value9": "2800000 80",
-                    "Path10": "adaptive_level_1",
-                    "value10": "0",
-                    "Path11": "hispeed_cond_freq",
-                    "value11": "0",
-                    "Path12": "up_rate_limit_us",
-                    "value12": "0"
+                "HeavyLoad": {
+                    "freq_max_c0": "2800000",
+                    "freq_max_c1": "3200000"
                 },
-                "c2": {
-                    "Path1": "0",
-                    "value1": "0"
+                "AmSwitch": {},
+                "Touch": {},
+                "None": {}
+            },
+            "CoreOnline": {
+                "Core0": 1,
+                "Core1": 1,
+                "Core2": 1,
+                "Core3": 1,
+                "Core4": 1,
+                "Core5": 1,
+                "Core6": 1,
+                "Core7": 1
+            }
+        },
+        {
+            "model_name": "fast",
+            "is_game": "false",
+            "packages": [],
+            "freq_min_c0": "800000",
+            "freq_max_c0": "2800000",
+            "freq_min_c1": "1200000",
+            "freq_max_c1": "3200000",
+            "gpu_min_mhz": "500",
+            "gpu_max_mhz": "1100",
+            "gov_c0": {
+                "governor": "hmbird",
+                "params": {
+                    "hispeed_freq": "",
+                    "hispeed_load": "",
+                    "pl": "",
+                    "rtg_boost_freq": ""
+                }
+            },
+            "gov_c1": {
+                "governor": "hmbird",
+                "params": {
+                    "hispeed_freq": "",
+                    "hispeed_load": "",
+                    "pl": "",
+                    "rtg_boost_freq": ""
+                }
+            },
+            "mode": "fast",
+            "Scenes": {
+                "Standby": {
+                    "freq_max_c0": "1500000",
+                    "freq_max_c1": "1800000"
                 },
-                "c3": {
-                    "Path1": "0",
-                    "value1": "0"
+                "AmSwitch": {},
+                "Touch": {},
+                "None": {}
+            },
+            "CoreOnline": {
+                "Core0": 1,
+                "Core1": 1,
+                "Core2": 1,
+                "Core3": 1,
+                "Core4": 1,
+                "Core5": 1,
+                "Core6": 1,
+                "Core7": 1
+            }
+        },
+        {
+            "model_name": "game_heavy",
+            "is_game": "true",
+            "packages": [
+                "com.hero.dna.gf",
+                "com.hottagames.yh.laohu",
+                "com.hypergryph.arknights",
+                "com.hypergryph.endfield",
+                "com.idreamsky.klbqm",
+                "com.kurogame.mingchao",
+                "com.manjuu.promilia",
+                "com.miHoYo.Nap",
+                "com.miHoYo.Yuanshen",
+                "com.miHoYo.bh3",
+                "com.miHoYo.hkrpg",
+                "com.netease.dwrg",
+                "com.netease.l22",
+                "com.netease.nshm",
+                "com.netease.party",
+                "com.netease.yyslscn",
+                "com.pi.czrxdfirst",
+                "com.pubg.imobile",
+                "com.soulgamechst.majsoul",
+                "com.tencent.KiHan",
+                "com.tencent.jkchess",
+                "com.tencent.lolm",
+                "com.tencent.mf.uam",
+                "com.tencent.nrc",
+                "com.tencent.tmgp.cf",
+                "com.tencent.tmgp.cod",
+                "com.tencent.tmgp.codev",
+                "com.tencent.tmgp.dfm",
+                "com.tencent.tmgp.nz",
+                "com.tencent.tmgp.pubgmhd",
+                "com.tencent.tmgp.sgame",
+                "com.tencent.tmgp.speedmobile",
+                "template.game.UE.RHI"
+            ],
+            "freq_min_c0": "700000",
+            "freq_max_c0": "3600000",
+            "freq_min_c1": "700000",
+            "freq_max_c1": "4000000",
+            "gpu_min_mhz": "0",
+            "gpu_max_mhz": "1200",
+            "gov_c0": {
+                "governor": "hmbird",
+                "params": {
+                    "hispeed_freq": "",
+                    "hispeed_load": "",
+                    "pl": "",
+                    "rtg_boost_freq": ""
+                }
+            },
+            "gov_c1": {
+                "governor": "hmbird",
+                "params": {
+                    "hispeed_freq": "",
+                    "hispeed_load": "",
+                    "pl": "",
+                    "rtg_boost_freq": ""
                 }
             },
             "CoreOnline": {
@@ -361,130 +400,39 @@
                 "Core5": 1,
                 "Core6": 1,
                 "Core7": 1
-            },
-            "GpuFreq": {
-                "min_freq": "120",
-                "max_freq": "600"
-            },
-            "Thermal": {
-                "core_temp_thresh": "disabled"
             }
         },
-        "performance": {
-            "MinFreq": {
-                "c0": "800000",
-                "c1": "1200000",
-                "c2": "",
-                "c3": ""
-            },
-            "MaxFreq": {
-                "c0": "2400000",
-                "c1": "3200000",
-                "c2": "",
-                "c3": ""
-            },
-            "idle": {
-                "MinFreq": {
-                    "c0": "800000",
-                    "c1": "1200000",
-                    "c2": "",
-                    "c3": ""
-                },
-                "MaxFreq": {
-                    "c0": "1800000",
-                    "c1": "2400000",
-                    "c2": "",
-                    "c3": ""
+        {
+            "model_name": "game_lite",
+            "is_game": "true",
+            "packages": [
+                "com.tencent.tmgp.cf",
+                "com.tencent.lolm",
+                "com.netease.party",
+                "com.tencent.mf.uam"
+            ],
+            "freq_min_c0": "700000",
+            "freq_max_c0": "2100000",
+            "freq_min_c1": "1000000",
+            "freq_max_c1": "2600000",
+            "gpu_min_mhz": "300",
+            "gpu_max_mhz": "800",
+            "gov_c0": {
+                "governor": "hmbird",
+                "params": {
+                    "hispeed_freq": "",
+                    "hispeed_load": "",
+                    "pl": "",
+                    "rtg_boost_freq": ""
                 }
             },
-            "heavy": {
-                "MinFreq": {
-                    "c0": "1400000",
-                    "c1": "2000000",
-                    "c2": "",
-                    "c3": ""
-                },
-                "MaxFreq": {
-                    "c0": "2400000",
-                    "c1": "3200000",
-                    "c2": "",
-                    "c3": ""
-                }
-            },
-            "critical": {
-                "MaxFreq": {
-                    "c0": "2400000",
-                    "c1": "3200000",
-                    "c2": "",
-                    "c3": ""
-                }
-            },
-            "governor": {
-                "c0": "walt",
-                "c1": "walt",
-                "c2": "walt",
-                "c3": "walt"
-            },
-            "SchedParam": {
-                "c0": {
-                    "Path1": "adaptive_high_freq",
-                    "value1": "0",
-                    "Path2": "adaptive_low_freq",
-                    "value2": "0",
-                    "Path3": "boost",
-                    "value3": "1",
-                    "Path4": "down_rate_limit_us",
-                    "value4": "0",
-                    "Path5": "hispeed_freq",
-                    "value5": "1600000",
-                    "Path6": "hispeed_load",
-                    "value6": "80",
-                    "Path7": "pl",
-                    "value7": "0",
-                    "Path8": "rtg_boost_freq",
-                    "value8": "800000",
-                    "Path9": "zone_max_util_pct",
-                    "value9": "2200000 85",
-                    "Path10": "adaptive_level_1",
-                    "value10": "0",
-                    "Path11": "hispeed_cond_freq",
-                    "value11": "900000",
-                    "Path12": "up_rate_limit_us",
-                    "value12": "0"
-                },
-                "c1": {
-                    "Path1": "adaptive_high_freq",
-                    "value1": "0",
-                    "Path2": "adaptive_low_freq",
-                    "value2": "0",
-                    "Path3": "boost",
-                    "value3": "1",
-                    "Path4": "down_rate_limit_us",
-                    "value4": "0",
-                    "Path5": "hispeed_freq",
-                    "value5": "2200000",
-                    "Path6": "hispeed_load",
-                    "value6": "75",
-                    "Path7": "pl",
-                    "value7": "0",
-                    "Path8": "rtg_boost_freq",
-                    "value8": "900000",
-                    "Path9": "zone_max_util_pct",
-                    "value9": "3200000 80",
-                    "Path10": "adaptive_level_1",
-                    "value10": "0",
-                    "Path11": "hispeed_cond_freq",
-                    "value11": "0",
-                    "Path12": "up_rate_limit_us",
-                    "value12": "0"
-                },
-                "c2": {
-                    "Path1": "0",
-                    "value1": "0"
-                },
-                "c3": {
-                    "Path1": "0",
-                    "value1": "0"
+            "gov_c1": {
+                "governor": "hmbird",
+                "params": {
+                    "hispeed_freq": "",
+                    "hispeed_load": "",
+                    "pl": "",
+                    "rtg_boost_freq": ""
                 }
             },
             "CoreOnline": {
@@ -496,170 +444,154 @@
                 "Core5": 1,
                 "Core6": 1,
                 "Core7": 1
-            },
-            "GpuFreq": {
-                "min_freq": "120",
-                "max_freq": "900"
-            },
-            "Thermal": {
-                "core_temp_thresh": "disabled"
             }
         },
-        "fast": {
-            "MinFreq": {
-                "c0": "1000000",
-                "c1": "1200000",
-                "c2": "",
-                "c3": ""
-            },
-            "MaxFreq": {
-                "c0": "2800000",
-                "c1": "3600000",
-                "c2": "",
-                "c3": ""
-            },
-            "idle": {
-                "MinFreq": {
-                    "c0": "1000000",
-                    "c1": "1200000",
-                    "c2": "",
-                    "c3": ""
-                },
-                "MaxFreq": {
-                    "c0": "2000000",
-                    "c1": "2800000",
-                    "c2": "",
-                    "c3": ""
+        {
+            "model_name": "video",
+            "is_game": "false",
+            "packages": [
+                "com.ss.android.ugc.aweme",
+                "com.smile.gifmaker",
+                "com.kuaishou.nebula",
+                "tv.danmaku.bili",
+                "com.bilibili.app.in",
+                "com.tencent.qqlive",
+                "com.youku.phone",
+                "com.qiyi.video",
+                "com.hunantv.imgo.video",
+                "com.netflix.mediaclient"
+            ],
+            "freq_min_c0": "400000",
+            "freq_max_c0": "1600000",
+            "freq_min_c1": "700000",
+            "freq_max_c1": "1900000",
+            "gpu_min_mhz": "0",
+            "gpu_max_mhz": "600",
+            "gov_c0": {
+                "governor": "walt",
+                "params": {
+                    "hispeed_freq": "998400",
+                    "hispeed_load": "92",
+                    "pl": "0"
                 }
             },
-            "heavy": {
-                "MinFreq": {
-                    "c0": "1600000",
-                    "c1": "2400000",
-                    "c2": "",
-                    "c3": ""
-                },
-                "MaxFreq": {
-                    "c0": "2800000",
-                    "c1": "3600000",
-                    "c2": "",
-                    "c3": ""
+            "gov_c1": {
+                "governor": "walt",
+                "params": {
+                    "hispeed_freq": "1017600",
+                    "hispeed_load": "92",
+                    "pl": "0"
+                }
+            }
+        },
+        {
+            "model_name": "social",
+            "is_game": "false",
+            "packages": [
+                "com.tencent.mm",
+                "com.tencent.mobileqq",
+                "com.tencent.tim",
+                "com.alibaba.android.rimet",
+                "com.ss.android.lark"
+            ],
+            "freq_min_c0": "300000",
+            "freq_max_c0": "1800000",
+            "freq_min_c1": "600000",
+            "freq_max_c1": "2000000",
+            "gov_c0": {
+                "governor": "walt",
+                "params": {
+                    "hispeed_freq": "998400",
+                    "hispeed_load": "92",
+                    "pl": "0"
                 }
             },
-            "critical": {
-                "MaxFreq": {
-                    "c0": "2800000",
-                    "c1": "3600000",
-                    "c2": "",
-                    "c3": ""
+            "gov_c1": {
+                "governor": "walt",
+                "params": {
+                    "hispeed_freq": "1017600",
+                    "hispeed_load": "92",
+                    "pl": "0"
+                }
+            }
+        },
+        {
+            "model_name": "reading",
+            "is_game": "false",
+            "packages": [
+                "com.phoenix.read",
+                "io.legado.app.release",
+                "com.kingsoft.moffice_pro",
+                "com.tencent.weread"
+            ],
+            "freq_min_c0": "300000",
+            "freq_max_c0": "1100000",
+            "freq_min_c1": "0",
+            "freq_max_c1": "1200000",
+            "gpu_min_mhz": "0",
+            "gpu_max_mhz": "400",
+            "gov_c0": {
+                "governor": "walt",
+                "params": {
+                    "hispeed_load": "98",
+                    "pl": "0"
                 }
             },
-            "governor": {
-                "c0": "performance",
-                "c1": "performance",
-                "c2": "performance",
-                "c3": "performance"
-            },
-            "SchedParam": {
-                "c0": {
-                    "Path1": "adaptive_high_freq",
-                    "value1": "0",
-                    "Path2": "adaptive_low_freq",
-                    "value2": "0",
-                    "Path3": "boost",
-                    "value3": "1",
-                    "Path4": "down_rate_limit_us",
-                    "value4": "0",
-                    "Path5": "hispeed_freq",
-                    "value5": "2000000",
-                    "Path6": "hispeed_load",
-                    "value6": "90",
-                    "Path7": "pl",
-                    "value7": "0",
-                    "Path8": "rtg_boost_freq",
-                    "value8": "800000",
-                    "Path9": "zone_max_util_pct",
-                    "value9": "2800000 90",
-                    "Path10": "adaptive_level_1",
-                    "value10": "0",
-                    "Path11": "hispeed_cond_freq",
-                    "value11": "900000",
-                    "Path12": "up_rate_limit_us",
-                    "value12": "0"
-                },
-                "c1": {
-                    "Path1": "adaptive_high_freq",
-                    "value1": "0",
-                    "Path2": "adaptive_low_freq",
-                    "value2": "0",
-                    "Path3": "boost",
-                    "value3": "1",
-                    "Path4": "down_rate_limit_us",
-                    "value4": "0",
-                    "Path5": "hispeed_freq",
-                    "value5": "2400000",
-                    "Path6": "hispeed_load",
-                    "value6": "90",
-                    "Path7": "pl",
-                    "value7": "0",
-                    "Path8": "rtg_boost_freq",
-                    "value8": "900000",
-                    "Path9": "zone_max_util_pct",
-                    "value9": "3600000 80",
-                    "Path10": "adaptive_level_1",
-                    "value10": "0",
-                    "Path11": "hispeed_cond_freq",
-                    "value11": "0",
-                    "Path12": "up_rate_limit_us",
-                    "value12": "0"
-                },
-                "c2": {
-                    "Path1": "0",
-                    "value1": "0"
-                },
-                "c3": {
-                    "Path1": "0",
-                    "value1": "0"
+            "gov_c1": {
+                "governor": "walt",
+                "params": {
+                    "hispeed_load": "98",
+                    "pl": "0"
+                }
+            }
+        },
+        {
+            "model_name": "music",
+            "is_game": "false",
+            "packages": [
+                "com.netease.cloudmusic",
+                "com.tencent.qqmusic",
+                "cn.kuwo.player",
+                "com.kugou.android",
+                "com.spotify.music",
+                "com.apple.android.music"
+            ],
+            "freq_min_c0": "300000",
+            "freq_max_c0": "900000",
+            "freq_min_c1": "0",
+            "freq_max_c1": "1000000",
+            "gpu_min_mhz": "0",
+            "gpu_max_mhz": "300",
+            "gov_c0": {
+                "governor": "walt",
+                "params": {
+                    "hispeed_load": "98",
+                    "pl": "0"
                 }
             },
-            "CoreOnline": {
-                "Core0": 1,
-                "Core1": 1,
-                "Core2": 1,
-                "Core3": 1,
-                "Core4": 1,
-                "Core5": 1,
-                "Core6": 1,
-                "Core7": 1
-            },
-            "GpuFreq": {
-                "min_freq": "120",
-                "max_freq": "1200"
-            },
-            "Thermal": {
-                "core_temp_thresh": "disabled"
+            "gov_c1": {
+                "governor": "walt",
+                "params": {
+                    "hispeed_load": "98",
+                    "pl": "0"
+                }
             }
         }
-    },
-    "AI": {
-        "enabled": true,
-        "mode": "AUTO",
-        "dynamic_ema": true,
-        "smart_boost": true,
-        "cpu_gpu_link": true,
-        "thermal_prediction": true,
-        "frame_aware": false,
-        "learning": true
-    },
-    "Expert": {
-        "allow_manual_cpu": true,
-        "allow_manual_gpu": true,
-        "allow_sched_params": true,
-        "override_ai": true
-    },
-    "Scheduler": {
-        "event_priority": true,
-        "async_dispatch": true,
-        "sysfs_batch_write": true
-    }
+    ],
+    "package_blacklist": [
+        "com.android.systemui",
+        "com.android.launcher*",
+        "com.miui.home",
+        "com.huawei.android.launcher",
+        "com.coloros.launcher",
+        "com.oneplus.launcher",
+        "com.baidu.input*",
+        "com.sohu.inputmethod.*",
+        "com.tencent.qqpinyin",
+        "com.iflytek.inputmethod*",
+        "com.google.android.inputmethod.*",
+        "android",
+        "PopupWindow",
+        "NotificationShade"
+    ]
 }

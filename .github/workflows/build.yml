@@ -1,0 +1,102 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "Json/**"
+      - "conf/**"
+      - "LICENSE"
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "LICENSE"
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: "Build type"
+        required: false
+        default: "Release"
+        type: choice
+        options:
+          - Release
+          - Debug
+
+jobs:
+  build:
+    name: Build (${{ matrix.abi }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Android NDK
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26d
+          add-to-path: false
+
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Build
+        env:
+          ANDROID_NDK: ${{ steps.ndk.outputs.ndk-path }}
+          BUILD_TYPE: ${{ github.event.inputs.build_type || 'Release' }}
+        run: |
+          chmod +x ./build.sh
+          ./build.sh ${{ matrix.abi }}
+
+      - name: Validate JSON configs
+        run: |
+          for f in Json/*.json; do
+            echo "Validating $f"
+            python3 -c "import json; json.load(open('$f'))"
+          done
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: CoreTurboScheduler-${{ matrix.abi }}
+          path: output/${{ matrix.abi }}/CoreTurboScheduler
+          if-no-files-found: error
+
+  bundle:
+    name: Bundle artifacts
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Assemble bundle
+        run: |
+          mkdir -p bundle
+          for d in artifacts/CoreTurboScheduler-*; do
+            abi="${d##*CoreTurboScheduler-}"
+            mkdir -p "bundle/$abi"
+            cp "$d/CoreTurboScheduler" "bundle/$abi/"
+          done
+          cp -r Json conf README.md LICENSE bundle/
+          ls -laR bundle/
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: CoreTurboScheduler-bundle
+          path: bundle/
+          if-no-files-found: error

@@ -1,29 +1,36 @@
-//By Ktwo
-#pragma once 
+// By Ktwo  --  v4.3 重构：对齐 Way_Balance 格式
+#pragma once
 #include <iostream>
 #include <fstream>
 #include <string>
+#include <atomic>
+#include <unordered_map>
 #include "Json/string.hpp"
 
 using string_t = qlib::string_t;
-using bool_t = qlib::bool_t;
+using bool_t   = qlib::bool_t;
 
 using std::ifstream;
+using std::unordered_map;
 
 namespace Config {
+
+    // ---------- meta ----------
     namespace Meta {
         string_t name;
-        int version = -1;
+        int      version = -1;
         string_t author;
         string_t loglevel;
     }
-    
+
+    // ---------- Policy ----------
     namespace Policy {
-        int CpuPolicy [4] = { -1, -1, -1, -1 }; 
+        int CpuPolicy[4] = { -1, -1, -1, -1 };
     }
 
+    // ---------- Cpuset（核心分配）----------
     namespace Cpuset {
-        bool enable = false;
+        bool     enable = false;
         string_t top_app;
         string_t foreground;
         string_t background;
@@ -31,25 +38,23 @@ namespace Config {
         string_t restricted;
     }
 
+    // ---------- LaunchBoost（启动加速，默认关，省电考虑）----------
     namespace LaunchBoost {
-        bool enable = false;
-        int boost_rate_limit_ms;
-        int boost_duration_ms = 2000;  // Boost 持续时间（毫秒），超时后自动恢复
+        bool     enable = false;
+        int      boost_rate_limit_ms = 35;
         string_t BoostFreq[4];
     }
 
-    namespace OfficialMode{
-        bool enable = false;
-    } 
-
-    namespace LoadBanlace {
+    // ---------- OfficialMode（fast 模式恢复默认）----------
+    namespace OfficialMode {
         bool enable = false;
     }
 
+    // ---------- Scheduler（CFS 调度器参数）----------
     namespace Scheduler {
-        bool enable = false;
-        bool Sched_energy_aware = false;
-        bool Sched_schedstats = false;
+        bool     enable = false;
+        bool     Sched_energy_aware = false;
+        bool     Sched_schedstats   = false;
         string_t Sched_latency_ns;
         string_t Sched_migration_cost_ns;
         string_t Sched_min_granularity_ns;
@@ -57,121 +62,172 @@ namespace Config {
         string_t Sched_nr_migrate;
         string_t Sched_util_clamp_min;
         string_t Sched_util_clamp_max;
-        // 新增CFS调度参数
-        string_t Sched_child_runs_first;      // 子进程优先运行
-        string_t Sched_tunable_scaling;       // 调度器缩放
-        string_t Sched_sched_compat_yield;    // 兼容yield
-        string_t Sched_wakeup_load_threshold; // 唤醒负载阈值
-        string_t Sched_migration_cost;        // 迁移成本
-        // NUMA相关（如果支持）
-        bool Sched_numa_balancing = false;
-        string_t Sched_numa_preferred_nid;
     }
 
-    namespace Stune {
-        bool enable = false;
-        string_t top_app_boost;
-        string_t foreground_boost;
-        string_t background_boost;
-        string_t top_app_prefer_idle;
-        string_t foreground_prefer_idle;
-        // 新增Uclamp参数（现代Android内核支持）
-        string_t top_app_uclamp_min;
-        string_t top_app_uclamp_max;
-        string_t foreground_uclamp_min;
-        string_t foreground_uclamp_max;
-        string_t background_uclamp_min;
-        string_t background_uclamp_max;
-        // 新增prefer_idle
-        string_t background_prefer_idle;
-        string_t system_background_prefer_idle;
-        string_t restricted_prefer_idle;
-    }
-
-    namespace IOScheduler {
-        bool enable = false;
-        string_t scheduler;
-        string_t read_ahead_kb;
-        string_t nr_requests;
-    }
-
+    // ---------- GpuFreq（GPU 频率控制）----------
     namespace GpuFreq {
-        bool enable = false;
-        string_t min_freq;
-        string_t max_freq;
+        bool     enable   = true;   // [Fix v4.3] 新增 enable 字段（旧版本编译报错的原因）
+        string_t min_freq;           // MHz，字符串保留兼容
+        string_t max_freq;           // MHz
     }
 
-    namespace LoadPredict {
-        bool enable = false;
-        // EMA 平滑系数 (0.0 ~ 1.0，越大越敏感)
-        double alpha = 0.2;
-        // 采样间隔（毫秒，参考 uperf 使用 100ms 高频采样）
-        int sample_interval_ms = 100;
-        // 负载级别阈值
-        double idle_threshold = 20.0;       // < 20% 视为 IDLE
-        double heavy_threshold = 70.0;      // > 70% 视为 HEAVY
-        double critical_threshold = 95.0;   // > 95% 视为 CRITICAL
-        // 阈值缓冲次数（连续 N 次确认后才切换级别，100ms x 10 = 1秒确认时间）
-        int buffer_count = 10;
-        // 预测阈值（参考 uperf v3）：负载增量 > predictThd * 100 时使用预测值
-        double predict_thd = 0.3;
-        // 每个核心的相对性能效率值（用于加权负载计算）
-        int efficiency[8] = {120, 120, 120, 120, 220, 220, 220, 240};
-        // 非对称 EMA
-        double alpha_up = 1.0;       // 上升系数（1.0 = 即时响应）
-        double alpha_down = 0.15;     // 下降系数（0.15 = 缓慢衰减）
-        // CUSUM 变点检测
-        double cusum_k = 5.0;        // 允许偏差
-        double cusum_h = 25.0;       // 决策阈值
-    }
-
-    namespace ProcessPriority {
-        bool enable = false;
-        // 前台应用主线程优先级提升
-        string_t foreground_nice;        // nice值，如 "-10"
-        string_t foreground_oom_score_adj; // OOM分数调整
-        // 后台应用限制
-        string_t background_nice;
-        string_t background_oom_score_adj;
-        // 系统关键进程保护
-        string_t system_nice;
-    }
-
-    namespace Memory {
-        bool enable = false;
-        string_t swappiness;           // 交换倾向 0-100
-        string_t page_cluster;         // 页面聚类
-        string_t dirty_ratio;          // 脏页比例
-        string_t dirty_background_ratio; // 后台脏页比例
-        string_t vfs_cache_pressure;   // VFS缓存压力
-        // LMK参数（如果内核支持）
-        string_t lmk_minfree_levels;   // LMK最小释放级别
-    }
-
-    namespace SchedDomain {
-        bool enable = false;
-        // 调度域层级设置
-        string_t sd0_flags;  // CPU核心内部
-        string_t sd1_flags;  // 集群内部
-        string_t sd2_flags;  // 跨集群
-    }
-
+    // ---------- Performances（基础频率，由当前 mode 选择的 model 填充）----------
     namespace Performances {
-        int Online[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
+        int      Online[8]    = { -1, -1, -1, -1, -1, -1, -1, -1 };  // [Fix v4.3] 默认 -1（跳过），不再误把核心关掉
         string_t MinFreq[4];
         string_t MaxFreq[4];
         string_t CpuGovernor[4];
-
-        // 场景频率覆盖（空=继承模式基础）
-        string_t IdleMinFreq[4];
-        string_t IdleMaxFreq[4];
-        string_t HeavyMinFreq[4];
-        string_t HeavyMaxFreq[4];
-        string_t CriticalMaxFreq[4];  // critical只要MaxFreq（拉满）
     }
 
+    // ============================================================
+    //  场景化频率（SceneFreq）
+    //  按场景覆盖 Performances，缺省字段继承 Performances 基础值
+    //  v4.3 省电改动：默认仅启用 Standby 场景的低频覆盖
+    // ============================================================
+    namespace SceneFreq {
+        constexpr int SCENE_COUNT = 5;       // None / Touch / AmSwitch / HeavyLoad / Standby
+        string_t MinFreq [SCENE_COUNT][4];
+        string_t MaxFreq [SCENE_COUNT][4];
+        string_t Governor[SCENE_COUNT][4];
+        bool     enable = true;
+    }
+
+    // ---------- SceneDetect 行为参数 ----------
+    namespace SceneCfg {
+        bool enable = true;
+
+        // HeavyLoad 触发参数（参考 uperf 三阶段省电设计）
+        int heavy_load_thd        = 70;
+        int idle_load_thd         = 30;
+        int heavy_confirm_count   = 2;
+        int heavy_max_duration_ms = 3000;
+        int request_burst_slack_ms= 2000;
+
+        // 短时场景时长
+        int am_switch_duration_ms = 1500;
+        int touch_duration_ms     = 1000;
+
+        // 采样间隔 -- v4.3 默认延长（省电）
+        int load_sample_interval_ms = 2000;   // 1s -> 2s
+        int screen_poll_interval_ms = 3000;   // 2s -> 3s（仅 fallback 时使用）
+
+        // Touch 检测开关 — 默认关闭：触摸事件极高频，触发频率重写会显著费电
+        // 已由 AmSwitch + HeavyLoad 覆盖响应度场景；如需可在 config.json 中显式开启
+        bool touch_enable = false;
+
+        // 输入设备最大编号
+        int input_dev_max = 16;
+    }
+
+    // ============================================================
+    //  AppProfile 应用画像（v4.3 重构：Way_Balance 扁平格式）
+    //
+    //  JSON 结构：
+    //    "package_blacklist": [...],
+    //    "models": [
+    //      {
+    //        "model_name": "game_heavy",
+    //        "is_game": true,
+    //        "packages": ["com.tencent.tmgp.sgame", "com.miHoYo.*"],
+    //        "freq_min_c0": 800000, "freq_max_c0": 2800000,
+    //        "freq_min_c1": 1000000,"freq_max_c1": 3000000,
+    //        "gpu_min_mhz": 500,    "gpu_max_mhz": 1100,
+    //        "gov_c0": { "governor": "walt", "params": {"hispeed_freq":"1324800"} }
+    //      }
+    //    ]
+    //
+    //  包名匹配：精确 / "*" 任意序列 / "?" 单字符
+    //  优先级：AppProfile > SceneFreq > Performances
+    // ============================================================
+    struct AppProfileModel {
+        string_t modelName;
+        string_t modeName;      // 情景模式名：powersave/balance/performance/fast（用于匹配 mode.txt）
+        bool     isGame = false;
+        string_t packages[32];
+        int      packageCount = 0;
+
+        // 频率（任一为空回退）
+        string_t MinFreq[4];
+        string_t MaxFreq[4];
+        string_t Governor[4];
+        string_t GpuMinFreq;
+        string_t GpuMaxFreq;
+        int      Online[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };
+
+        // 调速器自定义参数（每个集群独立）
+        string_t SchedParamName [4][16];
+        string_t SchedParamValue[4][16];
+        int      SchedParamCount[4] = { 0, 0, 0, 0 };
+    };
+
+    namespace AppProfile {
+        static constexpr int MAX_MODELS    = 32;
+        static constexpr int MAX_BLACKLIST = 64;
+        bool     enable = false;
+
+        string_t        packageBlacklist[MAX_BLACKLIST];
+        int             blacklistCount = 0;
+
+        AppProfileModel Models[MAX_MODELS];
+        int             modelCount   = 0;
+        // [Fix v4.1] currentMatch 被多个线程读、单线程写 → 必须 atomic
+        // 含义：>=0 表示当前匹配到了 packages 非空的"应用画像"模型；
+        //       -1 表示没有匹配的应用画像（此时仅用基础模型 + SceneFreq）
+        std::atomic<int> currentMatch{-1};
+
+        // [Fix v4.3] 迭代式通配符匹配，避免递归爆栈
+        inline bool matchPackage(const char* pattern, const char* pkg) {
+            const char* star = nullptr;   // 上次 '*' 的位置
+            const char* mark = nullptr;   // pkg 在那次 '*' 后的起点
+            while (*pkg) {
+                if (*pattern == '?') {
+                    pattern++; pkg++;
+                } else if (*pattern == '*') {
+                    star = pattern++;
+                    mark = pkg;
+                    if (!*pattern) return true; // 末尾 '*'
+                } else if (*pattern == *pkg) {
+                    pattern++; pkg++;
+                } else if (star) {
+                    pattern = star + 1;
+                    pkg     = ++mark;
+                } else {
+                    return false;
+                }
+            }
+            while (*pattern == '*') pattern++;
+            return *pattern == '\0';
+        }
+
+        inline bool isBlacklisted(const char* pkg) {
+            for (int i = 0; i < blacklistCount; i++) {
+                if (matchPackage(packageBlacklist[i].c_str(), pkg)) return true;
+            }
+            return false;
+        }
+
+        inline int findMatchingModel(const char* pkg) {
+            if (isBlacklisted(pkg)) return -1;
+            for (int i = 0; i < modelCount; i++) {
+                // packages 为空的 model 是"基础频率模型"，不参与匹配
+                if (Models[i].packageCount == 0) continue;
+                for (int j = 0; j < Models[i].packageCount; j++) {
+                    if (matchPackage(Models[i].packages[j].c_str(), pkg)) return i;
+                }
+            }
+            return -1;
+        }
+    }
+
+    // ---------- Netlink uevent 屏幕监听 ----------
+    namespace NetlinkCfg {
+        bool enable           = true;
+        int  fallback_poll_ms = 3000;   // v4.3 默认 3s（省电）
+    }
+
+    // ---------- 全局 SchedParam（被基础 model 写入）----------
     struct SchedParam {
-        string_t Name[24];
+        string_t Name [24];
         string_t Value[24];
     };
-}; 
+};
