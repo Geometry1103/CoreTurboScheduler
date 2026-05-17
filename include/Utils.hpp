@@ -86,11 +86,12 @@ public:
     }
 
     void FileWrite(const char* filePath, const char* content) noexcept {
-        int fd = open(filePath, O_WRONLY | O_NONBLOCK, 0666);
+        int fd = open(filePath, O_WRONLY | O_NONBLOCK);
 
         if (fd < 0) {
             chmod(filePath, 0666);
-            fd = open(filePath, O_WRONLY | O_CREAT | O_NONBLOCK); 
+            // O_CREAT 必须带 mode 参数（POSIX + fortify-source）
+            fd = open(filePath, O_WRONLY | O_CREAT | O_NONBLOCK, 0666);
         }
 
         if (fd >= 0) {
@@ -99,13 +100,13 @@ public:
         }
     }
 
-    
+
     void FileWrite(const string& filePath, const string& content) noexcept {
         int fd = open(filePath.c_str(), O_WRONLY | O_NONBLOCK);
 
         if (fd < 0) {
             chmod(filePath.c_str(), 0666);
-            fd = open(filePath.c_str(), O_WRONLY | O_CREAT | O_NONBLOCK); 
+            fd = open(filePath.c_str(), O_WRONLY | O_CREAT | O_NONBLOCK, 0666);
         }
 
         if (fd >= 0) {
@@ -115,13 +116,13 @@ public:
         }
     }
 
-        
+
     void FileWrite(const char* filePath, const string_t& content) noexcept {
         int fd = open(filePath, O_WRONLY | O_NONBLOCK);
 
         if (fd < 0) {
             chmod(filePath, 0666);
-            fd = open(filePath, O_WRONLY | O_CREAT | O_NONBLOCK); 
+            fd = open(filePath, O_WRONLY | O_CREAT | O_NONBLOCK, 0666);
         }
 
         if (fd >= 0) {
