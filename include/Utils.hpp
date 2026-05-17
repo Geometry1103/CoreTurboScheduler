@@ -72,8 +72,7 @@ private:
     std::mutex cacheMutex;
     std::unordered_map<std::string,std::string> writeCache;
 public:
-    bool CachedWrite(const std::string& path, const std::string& value) noexcept {
-        if (path.empty() || value.empty()) return false;
+    bool CachedWrite(const std::string& path,const std::string& value) noexcept {
         {
             std::lock_guard<std::mutex> lock(cacheMutex);
             auto it = writeCache.find(path);
@@ -86,38 +85,28 @@ public:
         return true;
     }
 
-    void ClearCache(const std::string& path) {
-        std::lock_guard<std::mutex> lock(cacheMutex);
-        writeCache.erase(path);
-    }
-
-    void ClearAllCache() {
-        std::lock_guard<std::mutex> lock(cacheMutex);
-        writeCache.clear();
-    }
-
     void FileWrite(const char* filePath, const char* content) noexcept {
-        int fd = open(filePath, O_WRONLY | O_CLOEXEC | O_NONBLOCK, 0666);
+        int fd = open(filePath, O_WRONLY | O_NONBLOCK);
 
         if (fd < 0) {
             chmod(filePath, 0666);
-            fd = open(filePath, O_WRONLY | O_CLOEXEC | O_CREAT | O_NONBLOCK); 
+            // O_CREAT 必须带 mode 参数（POSIX + fortify-source）
+            fd = open(filePath, O_WRONLY | O_CREAT | O_NONBLOCK, 0666);
         }
 
         if (fd >= 0) {
             write(fd, content, Faststrlen(content));
             close(fd);
-            chmod(filePath, 0444);
         }
     }
 
-    
+
     void FileWrite(const string& filePath, const string& content) noexcept {
-        int fd = open(filePath.c_str(), O_WRONLY | O_CLOEXEC | O_NONBLOCK);
+        int fd = open(filePath.c_str(), O_WRONLY | O_NONBLOCK);
 
         if (fd < 0) {
             chmod(filePath.c_str(), 0666);
-            fd = open(filePath.c_str(), O_WRONLY | O_CLOEXEC | O_CREAT | O_NONBLOCK); 
+            fd = open(filePath.c_str(), O_WRONLY | O_CREAT | O_NONBLOCK, 0666);
         }
 
         if (fd >= 0) {
@@ -127,19 +116,18 @@ public:
         }
     }
 
-        
+
     void FileWrite(const char* filePath, const string_t& content) noexcept {
-        int fd = open(filePath, O_WRONLY | O_CLOEXEC | O_NONBLOCK);
+        int fd = open(filePath, O_WRONLY | O_NONBLOCK);
 
         if (fd < 0) {
             chmod(filePath, 0666);
-            fd = open(filePath, O_WRONLY | O_CLOEXEC | O_CREAT | O_NONBLOCK); 
+            fd = open(filePath, O_WRONLY | O_CREAT | O_NONBLOCK, 0666);
         }
 
         if (fd >= 0) {
             write(fd, content.data(), content.size());
             close(fd);
-            chmod(filePath, 0444);
         }
     }
 
@@ -439,7 +427,8 @@ public:
 
         struct dirent* entry;
         while((entry = readdir(dir)) != nullptr) {
-            if (!strncmp(entry->d_name, "thermal_zone", 12)) continue;    
+            // [Fix v4.3] 原版逻辑反了：!strncmp == 0 是"匹配"，应该 continue 不匹配的项
+            if (strncmp(entry->d_name, "thermal_zone", 12) != 0) continue;
             auto fd = openZonePath(entry->d_name);
             if (fd < 0) continue;
             int currentTemp = readTemp(fd);
@@ -452,10 +441,14 @@ public:
         return (maxTemp != -1) ? maxTemp / 1000 : -1; // 舍去部分小数
     }
 
+    // [Fix v4.3] 原版漏了大括号导致 pclose 在 while 循环体内，第二次 fgets 用已关闭 FILE* → UB
+    // 只读第一行（dumpsys window | grep mCurrentFocus 输出本就只有一行）
     void popenShell(const char* cmd, char* buf, size_t buf_size) {
+        if (!buf || buf_size == 0) return;
+        buf[0] = '\0';
         auto fp = popen(cmd, "r");
         if (!fp) return;
-        while (fgets(buf, buf_size, fp) != nullptr)
+        if (fgets(buf, buf_size, fp) == nullptr) buf[0] = '\0';
         pclose(fp);
     }
     
@@ -501,6 +494,29 @@ public:
         return string(temp);
     }
 
+    // [新增 v4.3] 带 TTL 缓存的 getTopApp，省电关键
+    //   dumpsys 是个昂贵操作（每次约 100~300ms），频繁调用很费电。
+    //   minIntervalMs 内的请求直接返回上次结果，调用方应配合 inotify 触发
+    string getTopAppCached(int minIntervalMs = 1500) {
+        using clock = std::chrono::steady_clock;
+        static std::mutex   m;
+        static std::string  lastResult = "null";
+        static clock::time_point lastTime{};
+        auto now = clock::now();
+        {
+            std::lock_guard<std::mutex> lk(m);
+            auto since = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTime).count();
+            if (since < minIntervalMs && !lastResult.empty()) return lastResult;
+        }
+        std::string r = getTopApp();
+        {
+            std::lock_guard<std::mutex> lk(m);
+            lastResult = r;
+            lastTime   = now;
+        }
+        return r;
+    }
+
     size_t popenRead(const char* cmd, char* buf, size_t len) {
         auto fp = popen(cmd, "r");
         if (!fp) return 0;
@@ -512,45 +528,38 @@ public:
     }
     
     size_t readString(const char* path, char* buff, const size_t maxLen) {
-        if (!path || !buff || maxLen == 0) return 0;
-        auto fd = open(path, O_RDONLY | O_CLOEXEC);
-        if (fd < 0) {
+        if (maxLen == 0) return 0;
+        auto fd = open(path, O_RDONLY);
+        if (fd < 0) {  // Fix: fd <= 0 误判，fd=0(stdin) 是合法 fd，应判 fd < 0
             buff[0] = 0;
             return 0;
         }
-        ssize_t len = read(fd, buff, maxLen - 1);
+        ssize_t len = read(fd, buff, maxLen - 1);  // Fix: 最多读 maxLen-1，为 '\0' 留一位
         close(fd);
         if (len <= 0) {
             buff[0] = 0;
             return 0;
         }
-        buff[len] = 0;
-        for (ssize_t i = len - 1; i >= 0; i--) {
-            if (buff[i] == '\n' || buff[i] == '\r' || buff[i] == ' ' || buff[i] == '\t') {
-                buff[i] = '\0';
-            } else break;
-        }
+        buff[len] = 0;  // 现在 len <= maxLen-1，不会越界
         return (size_t)(len);
     }
 
-    bool mkdirRecursive(const char* dirPath) {
-        if (!dirPath) return false;
+    void mkdirRecursive(const char* dirPath) {
         char tmp[256];
         strncpy(tmp, dirPath, sizeof(tmp) - 1);
         tmp[sizeof(tmp) - 1] = '\0';
         size_t len = strlen(tmp);
-        if (len == 0) return false;
+        if (len == 0) return;
         if (tmp[len - 1] == '/') tmp[len - 1] = '\0';
-
+        
         for (char* p = tmp + 1; *p; p++) {
             if (*p == '/') {
                 *p = '\0';
-                mkdir(tmp, 0777);
+                mkdir(tmp, 0755);
                 *p = '/';
             }
         }
-        mkdir(tmp, 0777);
-        return access(tmp, F_OK) == 0;
+        mkdir(tmp, 0755);
     }
 private: 
     bool checkSensorPath(const char* str) {

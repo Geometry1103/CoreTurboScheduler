@@ -1,9 +1,16 @@
 #pragma once
- 
+// v4.1 重构：
+//   1) Way_Balance 扁平格式 + Switch 合并到 models (基础模型有 mode 字段 + Scenes 子节点)
+//   2) [Fix] 容忍配置文件把 bool/int 写成字符串（"true"/"75" 这种）
+//   3) [Fix] readBool/readInt 统一封装，避免 try/catch 噪音
+//   4) [Fix] 把模型在 models[] 中的 baseIdx 直接保存，避免重复 array()[idx] 查找
+//   5) [Fix] 解析 Scenes 提取为独立函数，减少嵌套层数
+
 #include "Json/json.h"
 #include "Config.hpp"
 #include "Logger.hpp"
 #include <stdexcept>
+#include <cstring>
 
 using namespace Config;
 using namespace qlib;
@@ -11,294 +18,557 @@ using namespace qlib;
 class JsonConfig {
 private:
     static constexpr const char* configPath = "/sdcard/Android/CTS/config.json";
-    static constexpr const char* modePath = "/sdcard/Android/CTS/mode.txt";
+    static constexpr const char* modePath   = "/sdcard/Android/CTS/mode.txt";
 
     Logger logger;
     json_view_t json;
 
     char buff[256];
-    char cluster [64];
-public:
-    SchedParam schedParam[4];
-    std::string mode;
 
+public:
+    SchedParam  schedParam[4];
+    std::string mode;
+    // [Fix v4.1] baseModelIdx 缓存：避免后续 Scenes 解析时再次遍历 models 找 baseIdx
+    int         baseModelIdx = -1;
+
+    // ============================================================
+    //  公共：mode.txt
+    // ============================================================
     void LoadConfig() {
-        ifstream file;
-        std::string temp; 
-        file.open(modePath);
-        if (!file.is_open()) { 
-            fprintf(stderr, "无法打开配置文件: %s\n", modePath);
+        ifstream file(modePath);
+        if (!file.is_open()) {
+            // mode.txt 不存在时默认 balance，避免首次部署报错
+            fprintf(stderr, "无法打开配置文件: %s，使用默认 balance\n", modePath);
+            mode = "balance";
             return;
         }
-
+        std::string temp;
         getline(file, temp);
-        // Trim trailing whitespace and newlines
         size_t end = temp.find_last_not_of(" \t\r\n");
-        if (end != std::string::npos) {
-            temp.erase(end + 1);
-        } else {
-            temp.clear();
-        }
+        if (end != std::string::npos) temp.erase(end + 1);
+        else                          temp.clear();
         mode = std::move(temp);
-
-        file.close();
     }
 
     bool switchConfig() const {
-        if (mode == "powersave" || mode == "balance" || mode == "performance" || mode == "fast") return true;
-        
+        return mode == "powersave" || mode == "balance" ||
+               mode == "performance" || mode == "fast";
+    }
+
+    // ============================================================
+    //  helpers — 容忍多种字段类型
+    //
+    //  许多用户/编辑器会把所有值写成字符串（"true" / "75"）。
+    //  qlib::json 是严格类型库，get<bool>() 在 string 值上抛异常 → 设置被静默忽略。
+    //  这些 helper 同时接受真实的 bool/int 和字符串形态。
+    // ============================================================
+    static string_t intToStr(int v) {
+        char tmp[16];
+        FastSnprintf(tmp, sizeof(tmp), "%d", v);
+        return string_t(tmp);
+    }
+
+    // 解析"true"/"false"/"1"/"0"/"on"/"off"/"yes"/"no"
+    static bool parseBoolString(const char* s, bool& out) {
+        if (!s || !*s) return false;
+        if (!strcmp(s, "true") || !strcmp(s, "1") ||
+            !strcmp(s, "on")   || !strcmp(s, "yes")) {
+            out = true; return true;
+        }
+        if (!strcmp(s, "false") || !strcmp(s, "0") ||
+            !strcmp(s, "off")   || !strcmp(s, "no")) {
+            out = false; return true;
+        }
         return false;
     }
 
-    bool readConfig() {
-        // Clear all string_t to safe empty state before loading
+    // readBool: 优先 native bool；不行就尝试 string
+    template <class Node>
+    bool readBool(Node& node, const char* key, bool& out) {
+        try {
+            out = node[key].template get<bool>();
+            return true;
+        } catch (...) {}
+        try {
+            string_t s = node[key].template get<string_t>();
+            return parseBoolString(s.c_str(), out);
+        } catch (...) {}
+        return false;
+    }
+
+    // readInt: 优先 native int；不行就 atoi(string)
+    template <class Node>
+    bool readInt(Node& node, const char* key, int& out) {
+        try {
+            out = node[key].template get<int>();
+            return true;
+        } catch (...) {}
+        try {
+            string_t s = node[key].template get<string_t>();
+            if (s.empty()) return false;
+            int v = Fastatoi(s.c_str());
+            // Fastatoi 不支持负号，对于 "-1" 这种特例补一下
+            if (s.c_str()[0] == '-') v = -Fastatoi(s.c_str() + 1);
+            out = v;
+            return true;
+        } catch (...) {}
+        return false;
+    }
+
+    // readStr: native string
+    template <class Node>
+    bool readStr(Node& node, const char* key, string_t& out) {
+        try {
+            out = node[key].template get<string_t>();
+            return true;
+        } catch (...) {}
+        return false;
+    }
+
+    // readFreq: 支持 int / string；0 或 -1 视为"未设置"
+    template <class Node>
+    bool readFreq(Node& node, const char* key, string_t& out) {
+        int v;
+        if (readInt(node, key, v)) {
+            if (v <= 0) return false;
+            out = intToStr(v);
+            return true;
+        }
+        // 已经是 string 形态的 readInt 会被 readInt 中的 string 分支处理
+        // 这里不再尝试 readStr，因为非数字字符串当频率没意义
+        return false;
+    }
+
+    // ============================================================
+    //  解析单个 model 节点 -> AppProfileModel
+    // ============================================================
+    template <class Node>
+    void parseModelNode(Node& node, AppProfileModel& out) {
+        readStr (node, "model_name", out.modelName);
+        readStr (node, "mode",       out.modeName);
+        readBool(node, "is_game",    out.isGame);
+
+        // packages
+        try {
+            auto& arr = node["packages"];
+            int n = 0;
+            for (int p = 0; p < 32; p++) {
+                try {
+                    string_t pkg = arr.array()[p].template get<string_t>();
+                    if (pkg.empty()) break;
+                    out.packages[n++] = pkg;
+                } catch (...) { break; }
+            }
+            out.packageCount = n;
+        } catch (...) {}
+
+        // 频率 freq_min_c0 / freq_max_c0 ...
         for (int i = 0; i <= 3; i++) {
-            for (int j = 0; j <= 12; j++) {
-                this->schedParam[i].Name[j] = "";
-                this->schedParam[i].Value[j] = "";
-            }
-        }
-        Performances::MinFreq[0] = ""; Performances::MinFreq[1] = "";
-        Performances::MinFreq[2] = ""; Performances::MinFreq[3] = "";
-        Performances::MaxFreq[0] = ""; Performances::MaxFreq[1] = "";
-        Performances::MaxFreq[2] = ""; Performances::MaxFreq[3] = "";
-        Performances::CpuGovernor[0] = ""; Performances::CpuGovernor[1] = "";
-        Performances::CpuGovernor[2] = ""; Performances::CpuGovernor[3] = "";
-        LaunchBoost::BoostFreq[0] = ""; LaunchBoost::BoostFreq[1] = "";
-        LaunchBoost::BoostFreq[2] = ""; LaunchBoost::BoostFreq[3] = "";
-        Performances::Online[0] = 0; Performances::Online[1] = 0;
-        Performances::Online[2] = 0; Performances::Online[3] = 0;
-        Performances::Online[4] = 0; Performances::Online[5] = 0;
-        Performances::Online[6] = 0; Performances::Online[7] = 0;
-        GpuFreq::min_freq = "";
-        GpuFreq::max_freq = "";
-        Meta::name = "";
-        Meta::author = "";
-        Meta::loglevel = "";
-        IOScheduler::scheduler = "";
-
-        ifstream ifs(configPath, std::ios::binary);
-        if (!ifs) {
-            logger.Error("无法打开json配置文件");
-            return false;
+            FastSnprintf(buff, sizeof(buff), "freq_min_c%d", i);
+            readFreq(node, buff, out.MinFreq[i]);
+            FastSnprintf(buff, sizeof(buff), "freq_max_c%d", i);
+            readFreq(node, buff, out.MaxFreq[i]);
         }
 
-        std::string text((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+        // gov_c0 / gov_c1 / ... 嵌套 governor + params
+        parseGovernorNodes(node, out);
 
-        int result = json::parse(&json, text.data(), text.data() + text.size());
-        if (result != 0) {
-            logger.Error("解析json配置文件失败 错误: %d", result);
-            return false; 
-        }
-
+        // GPU 频率：gpu_min_mhz / gpu_max_mhz（数字或字符串）
+        readFreq(node, "gpu_min_mhz", out.GpuMinFreq);
+        readFreq(node, "gpu_max_mhz", out.GpuMaxFreq);
+        // 兼容旧的嵌套写法
         try {
-            Meta::name = json["meta"]["name"].get<string_t>();
-            Meta::version = json["meta"]["version"].get<int>();
-            Meta::author = json["meta"]["author"].get<string_t>();
-            Meta::loglevel = json["meta"]["loglevel"].get<string_t>();
-            
-            #if DEBUG_DURATION
-                logger.Debug("---------源信息---------");
-                logger.Info("名称: %s", Meta::name.c_str());
-                logger.Info("版本: %d", Meta::version);
-                logger.Info("作者: %s", Meta::author.c_str());
-                logger.Info("日志等级: %s", Meta::loglevel.c_str());
-                logger.Info("---------CPU簇---------");
-            #endif
+            auto& gpu = node["GpuFreq"];
+            if (out.GpuMinFreq.empty()) readFreq(gpu, "min_freq", out.GpuMinFreq);
+            if (out.GpuMaxFreq.empty()) readFreq(gpu, "max_freq", out.GpuMaxFreq);
+        } catch (...) {}
 
-            for (int i = 0; i <= 3; i++) {
-                FastSnprintf(buff, sizeof(buff), "c%d", i);
-                if (json["Policy"][buff].get<int>() == 255) continue;
-                Policy::CpuPolicy[i] = json["Policy"][buff].get<int>();
-                #if DEBUG_DURATION
-                    logger.Debug("CPU簇 %d 的值为: %d", i, Policy::CpuPolicy[i]);
-                #endif
-            }
-        } catch (const qlib::exception& e) {
-            logger.Error("Meta节点异常 错误消息: %s", e.what());
-        }
-
+        // 核心开关 CoreOnline:{Core0:1,...}
         try {
-            #if DEBUG_DURATION
-                logger.Debug("---------附加功能---------");
-            #endif 
-
-            auto& Cpuset = json["Function"]["Cpuset"];
-            Cpuset::enable = Cpuset["enable"].get<bool>();
-            Cpuset::top_app = Cpuset["top_app"].get<string_t>();
-            Cpuset::foreground = Cpuset["foreground"].get<string_t>();
-            Cpuset::background = Cpuset["background"].get<string_t>();
-            Cpuset::system_background = Cpuset["system_background"].get<string_t>();
-            Cpuset::restricted = Cpuset["restricted"].get<string_t>();
-
-            #if DEBUG_DURATION
-                logger.Debug("Cpuset 开关: %s", Cpuset::enable ? "开启" : "关闭");
-                logger.Debug("top_app: %s", Cpuset::top_app.c_str());
-                logger.Debug("foreground: %s", Cpuset::foreground.c_str());
-                logger.Debug("background: %s", Cpuset::background.c_str());
-                logger.Debug("system_background: %s", Cpuset::system_background.c_str());
-                logger.Debug("restricted: %s", Cpuset::restricted.c_str());
-            #endif
-
-            auto& LaunchBoost = json["Function"]["LaunchBoost"];
-            LaunchBoost::enable = LaunchBoost["enable"].get<bool>();
-            LaunchBoost::boost_rate_limit_ms = LaunchBoost["boost_rate_limit_ms"].get<int>();
-            for (int i = 0; i <= 3; i++) {
-                FastSnprintf(buff, sizeof(buff), "c%d", i);
-                auto& BoostFreq = LaunchBoost::BoostFreq[i] = LaunchBoost["BoostFreq"][buff].get<string_t>();
-                if (BoostFreq.empty()) continue;
-        
-                #if DEBUG_DURATION
-                    logger.Debug("LaunchBoost开关: %s", LaunchBoost::enable ? "开启" : "关闭");
-                    logger.Debug("LaunchBoost升频持续时间: %d", LaunchBoost::boost_rate_limit_ms);
-                    logger.Debug("LaunchBoost频率: %s", LaunchBoost::BoostFreq[i].c_str());
-                #endif
-            }
-
-            auto& officialMode = json["Function"]["OfficialMode"];
-            OfficialMode::enable = officialMode["enable"].get<bool>();
-            #if DEBUG_DURATION
-                logger.Debug("OfficialMode 开关: %s", OfficialMode::enable ? "开启" : "关闭"); 
-            #endif
-            
-            auto& LoadBalancing = json["Function"]["LoadBalancing"];
-            LoadBanlace::enable = LoadBalancing["enable"].get<bool>();
-
-            #if DEBUG_DURATION
-                logger.Debug("LoadBalancing 开关: %s", LoadBanlace::enable ? "开启" : "关闭"); 
-            #endif
-
-            auto& Scheduler = json["Function"]["Scheduler"];
-            Scheduler::enable = Scheduler["enable"].get<bool>();
-            Scheduler::Sched_energy_aware = Scheduler["sched_energy_aware"].get<bool>();
-            Scheduler::Sched_schedstats = Scheduler["sched_schedstats"].get<bool>();
-            Scheduler::Sched_latency_ns = Scheduler["sched_latency_ns"].get<string_t>();
-            Scheduler::Sched_migration_cost_ns = Scheduler["sched_migration_cost_ns"].get<string_t>();
-            Scheduler::Sched_min_granularity_ns = Scheduler["sched_min_granularity_ns"].get<string_t>();
-            Scheduler::Sched_wakeup_granularity_ns = Scheduler["sched_wakeup_granularity_ns"].get<string_t>();
-            Scheduler::Sched_nr_migrate = Scheduler["sched_nr_migrate"].get<string_t>();
-            Scheduler::Sched_util_clamp_min = Scheduler["sched_util_clamp_min"].get<string_t>();
-            Scheduler::Sched_util_clamp_max = Scheduler["sched_util_clamp_max"].get<string_t>();
-
-            #if DEBUG_DURATION
-                logger.Debug("Scheduler 总开关: %s", Scheduler::enable ? "开启" : "关闭");
-                logger.Debug("Sched_energy_aware: %s", Scheduler::Sched_energy_aware ? "true" : "false");
-                logger.Debug("Sched_schedstats: %s", Scheduler::Sched_schedstats ? "true" : "false");
-                logger.Debug("Sched_latency_ns: %s", Scheduler::Sched_latency_ns.c_str());
-                logger.Debug("Sched_migration_cost_ns: %s", Scheduler::Sched_migration_cost_ns.c_str());
-                logger.Debug("Sched_min_granularity_ns: %s", Scheduler::Sched_min_granularity_ns.c_str());
-                logger.Debug("Sched_wakeup_granularity_ns: %s", Scheduler::Sched_wakeup_granularity_ns.c_str());
-                logger.Debug("Sched_nr_migrate: %s", Scheduler::Sched_nr_migrate.c_str());
-                logger.Debug("Sched_util_clamp_min: %s", Scheduler::Sched_util_clamp_min.c_str());
-                logger.Debug("Sched_util_clamp_max: %s", Scheduler::Sched_util_clamp_max.c_str());
-            #endif
-
-            auto& IOSched = json["Function"]["IOScheduler"];
-            IOScheduler::enable = IOSched["enable"].get<bool>();
-            IOScheduler::scheduler = IOSched["scheduler"].get<string_t>();
-            IOScheduler::read_ahead_kb = IOSched["read_ahead_kb"].get<string_t>();
-            IOScheduler::nr_requests = IOSched["nr_requests"].get<string_t>();
-
-            #if DEBUG_DURATION
-                logger.Debug("IOScheduler 总开关: %s", IOScheduler::enable ? "开启" : "关闭");
-                logger.Debug("IOScheduler scheduler: %s", IOScheduler::scheduler.c_str());
-                logger.Debug("IOScheduler read_ahead_kb: %s", IOScheduler::read_ahead_kb.c_str());
-                logger.Debug("IOScheduler nr_requests: %s", IOScheduler::nr_requests.c_str());
-            #endif
-
-            auto& GpuFreq = json["Function"]["GpuFreq"];
-            GpuFreq::enable = GpuFreq["enable"].get<bool>();
-
-            #if DEBUG_DURATION
-                logger.Debug("GpuFreq 总开关: %s", GpuFreq::enable ? "开启" : "关闭");
-            #endif
-
-            auto& StuneConfig = json["Function"]["Stune"];
-            Stune::enable = StuneConfig["enable"].get<bool>();
-            Stune::top_app_boost = StuneConfig["top_app_boost"].get<string_t>();
-            Stune::foreground_boost = StuneConfig["foreground_boost"].get<string_t>();
-            Stune::background_boost = StuneConfig["background_boost"].get<string_t>();
-            Stune::top_app_prefer_idle = StuneConfig["top_app_prefer_idle"].get<string_t>();
-            Stune::foreground_prefer_idle = StuneConfig["foreground_prefer_idle"].get<string_t>();
-
-            #if DEBUG_DURATION
-                logger.Debug("Stune 总开关: %s", Stune::enable ? "开启" : "关闭");
-                logger.Debug("Stune top_app_boost: %s", Stune::top_app_boost.c_str());
-                logger.Debug("Stune foreground_boost: %s", Stune::foreground_boost.c_str());
-                logger.Debug("Stune background_boost: %s", Stune::background_boost.c_str());
-                logger.Debug("Stune top_app_prefer_idle: %s", Stune::top_app_prefer_idle.c_str());
-                logger.Debug("Stune foreground_prefer_idle: %s", Stune::foreground_prefer_idle.c_str());
-            #endif
-
-        } catch (const qlib::exception& e) {
-            logger.Error("Function节点异常: %s", e.what());
-        }
-
-        LoadConfig();
-
-        if (mode.empty()) {
-            logger.Error("情景模式为空 无法读取数据");
-            return false;
-        }
-        
-        if (!switchConfig()) {
-            logger.Error("情景模式异常 当前情景模式: '%s'", mode.c_str());
-            return false;
-        }
-        
-        try {
-            logger.Info("当前性能模式: %s", mode.c_str());
-
-            auto& Switch = json["Switch"][mode.c_str()];
-            for (int i = 0; i <= 3; i++) {
-                FastSnprintf(buff, sizeof(buff), "c%d", i);
-                auto& MinFreq = Performances::MinFreq[i] = Switch["MinFreq"][buff].get<string_t>();
-                auto& MaxFreq = Performances::MaxFreq[i] = Switch["MaxFreq"][buff].get<string_t>();
-                auto& CpuGovernor = Performances::CpuGovernor[i] = Switch["governor"][buff].get<string_t>();
-                if (MinFreq.empty() || MaxFreq.empty() || CpuGovernor.empty()) continue;
-                logger.Info("CPU簇: %d 最小频率: %s 最大频率: %s 调速器: %s", 
-                    Policy::CpuPolicy[i], Performances::MinFreq[i].c_str(), 
-                        Performances::MaxFreq[i].c_str(), Performances::CpuGovernor[i].c_str());
-            }
-
+            auto& coreNode = node["CoreOnline"];
             for (int i = 0; i <= 7; i++) {
                 FastSnprintf(buff, sizeof(buff), "Core%d", i);
-                Performances::Online[i] = Switch["CoreOnline"][buff].get<int>();
-                logger.Debug("核心: %d %s", i, Performances::Online[i] ? "开启" : "关闭");
-            }
-            
-            for (int i = 0; i <= 3; i++) {
-                FastSnprintf(cluster, sizeof(cluster), "c%d", i);
-                try {
-                    auto& sp = Switch["SchedParam"][cluster];
-                    for (int j = 1; j <= 12; j++) {
-                        FastSnprintf(buff, sizeof(buff), "Path%d", j);
-                        auto name = sp[buff].get<string_t>();
-                        if (name.empty()) continue;
-
-                        FastSnprintf(buff, sizeof(buff), "value%d", j);
-                        auto value = sp[buff].get<string_t>();
-                        if (value.empty()) continue;
-
-                        schedParam[i].Name[j] = name;
-                        schedParam[i].Value[j] = value;
-                    }
-                } catch (...) {
-                    // SchedParam cluster not found, skip
+                int v;
+                if (readInt(coreNode, buff, v)) {
+                    out.Online[i] = (v == 1) ? 1 : (v == 0 ? 0 : -1);
                 }
             }
+        } catch (...) {}
+    }
 
-            auto& GpuFreqSwitch = Switch["GpuFreq"];
-            GpuFreq::min_freq = GpuFreqSwitch["min_freq"].get<string_t>();
-            GpuFreq::max_freq = GpuFreqSwitch["max_freq"].get<string_t>();
+    // 子函数：解析 gov_c0..gov_c3 的 governor + params
+    template <class Node>
+    void parseGovernorNodes(Node& node, AppProfileModel& out) {
+        // 此表是按内核常见调速器参数白名单（qlib::json 不支持迭代 object 的 key）
+        static const char* commonParams[] = {
+            "hispeed_freq", "hispeed_load", "hispeed_cond_freq",
+            "rtg_boost_freq", "pl", "zone_max_util_pct",
+            "above_hispeed_delay", "go_hispeed_load", "target_loads",
+            "min_sample_time", "timer_rate", "boost",
+            "boostpulse_duration", "io_is_busy", "down_rate_limit_us",
+            "up_rate_limit_us"
+        };
+        constexpr int N = sizeof(commonParams) / sizeof(commonParams[0]);
 
-            logger.Info("GPU min_freq: %s  max_freq: %s", 
-                GpuFreq::min_freq.c_str(), GpuFreq::max_freq.c_str());
-        } catch (const qlib::exception& e) {
-            logger.Error("情景模式异常: %s", e.what());
-            return false;
+        for (int i = 0; i <= 3; i++) {
+            FastSnprintf(buff, sizeof(buff), "gov_c%d", i);
+            try {
+                auto& gov = node[buff];
+                readStr(gov, "governor", out.Governor[i]);
+                try {
+                    auto& params = gov["params"];
+                    int spCount = 0;
+                    for (int k = 0; k < N && spCount < 16; k++) {
+                        string_t v;
+                        if (readStr(params, commonParams[k], v) && !v.empty()) {
+                            out.SchedParamName [i][spCount] = commonParams[k];
+                            out.SchedParamValue[i][spCount] = v;
+                            spCount++;
+                        }
+                    }
+                    out.SchedParamCount[i] = spCount;
+                } catch (...) {}
+            } catch (...) {}
         }
+    }
+
+    // ============================================================
+    //  解析 Scenes 子节点（属于基础模型）
+    //    向后兼容两种写法：
+    //      "Standby": { "freq_max_c0": 600000 }           — 扁平（推荐）
+    //      "Standby": { "MaxFreq": {"c0":"600000"} }       — 旧嵌套
+    // ============================================================
+    void resetSceneFreq() {
+        for (int s = 0; s < SceneFreq::SCENE_COUNT; s++) {
+            for (int i = 0; i <= 3; i++) {
+                SceneFreq::MinFreq [s][i] = "";
+                SceneFreq::MaxFreq [s][i] = "";
+                SceneFreq::Governor[s][i] = "";
+            }
+        }
+    }
+
+    template <class Node>
+    void parseScenesNode(Node& sceneRoot) {
+        static const char* sceneNames[] = {
+            "None", "Touch", "AmSwitch", "HeavyLoad", "Standby"
+        };
+        int loaded = 0;
+        for (int s = 0; s < SceneFreq::SCENE_COUNT; s++) {
+            try {
+                auto& oneScene = sceneRoot[sceneNames[s]];
+                bool any = false;
+                for (int i = 0; i <= 3; i++) {
+                    // 扁平写法 freq_min_c0
+                    FastSnprintf(buff, sizeof(buff), "freq_min_c%d", i);
+                    if (readFreq(oneScene, buff, SceneFreq::MinFreq[s][i])) any = true;
+                    FastSnprintf(buff, sizeof(buff), "freq_max_c%d", i);
+                    if (readFreq(oneScene, buff, SceneFreq::MaxFreq[s][i])) any = true;
+
+                    // 兼容旧嵌套写法
+                    FastSnprintf(buff, sizeof(buff), "c%d", i);
+                    string_t v;
+                    try {
+                        if (readStr(oneScene["MinFreq"], buff, v) && !v.empty()) {
+                            SceneFreq::MinFreq[s][i] = v; any = true;
+                        }
+                    } catch (...) {}
+                    try {
+                        if (readStr(oneScene["MaxFreq"], buff, v) && !v.empty()) {
+                            SceneFreq::MaxFreq[s][i] = v; any = true;
+                        }
+                    } catch (...) {}
+                    try {
+                        if (readStr(oneScene["governor"], buff, v) && !v.empty()) {
+                            SceneFreq::Governor[s][i] = v; any = true;
+                        }
+                    } catch (...) {}
+                }
+                if (any) loaded++;
+            } catch (...) {}
+        }
+        if (loaded > 0) logger.Info("场景频率已加载 %d 个", loaded);
+    }
+
+    // ============================================================
+    //  清零所有运行时状态
+    // ============================================================
+    void resetState() {
+        for (int i = 0; i <= 3; i++) {
+            for (int j = 0; j < 24; j++) {
+                schedParam[i].Name [j] = "";
+                schedParam[i].Value[j] = "";
+            }
+            Performances::MinFreq[i]     = "";
+            Performances::MaxFreq[i]     = "";
+            Performances::CpuGovernor[i] = "";
+            LaunchBoost::BoostFreq[i]    = "";
+        }
+        for (int i = 0; i <= 7; i++) Performances::Online[i] = -1;
+        GpuFreq::min_freq = "";
+        GpuFreq::max_freq = "";
+        Meta::name = ""; Meta::author = ""; Meta::loglevel = "";
+
+        AppProfile::modelCount      = 0;
+        AppProfile::blacklistCount  = 0;
+        AppProfile::currentMatch.store(-1);
+        baseModelIdx = -1;
+        for (int i = 0; i < AppProfile::MAX_BLACKLIST; i++)
+            AppProfile::packageBlacklist[i] = "";
+        for (int i = 0; i < AppProfile::MAX_MODELS; i++) {
+            auto& m = AppProfile::Models[i];
+            m.modelName = ""; m.modeName = ""; m.isGame = false; m.packageCount = 0;
+            for (int j = 0; j < 32; j++) m.packages[j] = "";
+            for (int j = 0; j <= 3; j++) {
+                m.MinFreq[j] = ""; m.MaxFreq[j] = ""; m.Governor[j] = "";
+                m.SchedParamCount[j] = 0;
+                for (int k = 0; k < 16; k++) {
+                    m.SchedParamName [j][k] = "";
+                    m.SchedParamValue[j][k] = "";
+                }
+            }
+            m.GpuMinFreq = ""; m.GpuMaxFreq = "";
+            for (int j = 0; j <= 7; j++) m.Online[j] = -1;
+        }
+        resetSceneFreq();
+    }
+
+    // ============================================================
+    //  主入口
+    // ============================================================
+    bool readConfig() {
+        resetState();
+
+        ifstream ifs(configPath, std::ios::binary);
+        if (!ifs) { logger.Error("无法打开配置文件: %s", configPath); return false; }
+        std::string text((std::istreambuf_iterator<char>(ifs)),
+                          std::istreambuf_iterator<char>());
+        int rc = json::parse(&json, text.data(), text.data() + text.size());
+        if (rc != 0) { logger.Error("解析 config.json 失败 错误码: %d", rc); return false; }
+
+        // ---- meta ----
+        try {
+            auto& m = json["meta"];
+            readStr (m, "name",     Meta::name);
+            readInt (m, "version",  Meta::version);
+            readStr (m, "author",   Meta::author);
+            readStr (m, "loglevel", Meta::loglevel);
+        } catch (...) { logger.Warn("meta 节点缺失"); }
+
+        // ---- Policy ----
+        try {
+            auto& p = json["Policy"];
+            for (int i = 0; i <= 3; i++) {
+                FastSnprintf(buff, sizeof(buff), "c%d", i);
+                int v;
+                if (readInt(p, buff, v)) {
+                    Policy::CpuPolicy[i] = (v == 255) ? -1 : v;
+                }
+            }
+        } catch (...) { logger.Warn("Policy 节点异常"); }
+
+        // ---- Function ----
+        parseFunctionSection();
+
+        LoadConfig();
+        if (mode.empty())    { logger.Error("情景模式为空");                       return false; }
+        if (!switchConfig()) { logger.Error("情景模式无效: '%s'", mode.c_str());   return false; }
+        logger.Info("当前情景模式: %s", mode.c_str());
+
+        // ---- package_blacklist + models ----
+        parseBlacklist();
+        parseModels();
+
+        // ---- 在 models 中找 mode 匹配的基础模型 → 填充 Performances 和 Scenes ----
+        applyBaseModel();
 
         return true;
+    }
+
+private:
+    // ---- Function 子树 ----
+    void parseFunctionSection() {
+        try {
+            auto& F = json["Function"];
+
+            // Cpuset
+            try {
+                auto& c = F["Cpuset"];
+                readBool(c, "enable",            Cpuset::enable);
+                readStr (c, "top_app",           Cpuset::top_app);
+                readStr (c, "foreground",        Cpuset::foreground);
+                readStr (c, "background",        Cpuset::background);
+                readStr (c, "system_background", Cpuset::system_background);
+                readStr (c, "restricted",        Cpuset::restricted);
+            } catch (...) { logger.Debug("无 Cpuset 节点"); }
+
+            // LaunchBoost
+            try {
+                auto& l = F["LaunchBoost"];
+                readBool(l, "enable",              LaunchBoost::enable);
+                readInt (l, "boost_rate_limit_ms", LaunchBoost::boost_rate_limit_ms);
+                try {
+                    auto& bf = l["BoostFreq"];
+                    for (int i = 0; i <= 3; i++) {
+                        FastSnprintf(buff, sizeof(buff), "c%d", i);
+                        readStr(bf, buff, LaunchBoost::BoostFreq[i]);
+                    }
+                } catch (...) {}
+            } catch (...) {}
+
+            // OfficialMode
+            try {
+                auto& o = F["OfficialMode"];
+                readBool(o, "enable", OfficialMode::enable);
+            } catch (...) {}
+
+            // Scheduler
+            try {
+                auto& s = F["Scheduler"];
+                readBool(s, "enable",                       Scheduler::enable);
+                readBool(s, "sched_energy_aware",           Scheduler::Sched_energy_aware);
+                readBool(s, "sched_schedstats",             Scheduler::Sched_schedstats);
+                readStr (s, "sched_latency_ns",             Scheduler::Sched_latency_ns);
+                readStr (s, "sched_migration_cost_ns",      Scheduler::Sched_migration_cost_ns);
+                readStr (s, "sched_min_granularity_ns",     Scheduler::Sched_min_granularity_ns);
+                readStr (s, "sched_wakeup_granularity_ns",  Scheduler::Sched_wakeup_granularity_ns);
+                readStr (s, "sched_nr_migrate",             Scheduler::Sched_nr_migrate);
+                readStr (s, "sched_util_clamp_min",         Scheduler::Sched_util_clamp_min);
+                readStr (s, "sched_util_clamp_max",         Scheduler::Sched_util_clamp_max);
+            } catch (...) {}
+
+            // GpuFreq.enable
+            try {
+                auto& g = F["GpuFreq"];
+                readBool(g, "enable", GpuFreq::enable);
+            } catch (...) {}
+
+            // SceneDetect
+            try {
+                auto& sc = F["SceneDetect"];
+                readBool(sc, "enable",                  SceneCfg::enable);
+                readInt (sc, "heavy_load_thd",          SceneCfg::heavy_load_thd);
+                readInt (sc, "idle_load_thd",           SceneCfg::idle_load_thd);
+                readInt (sc, "heavy_confirm_count",     SceneCfg::heavy_confirm_count);
+                readInt (sc, "heavy_max_duration_ms",   SceneCfg::heavy_max_duration_ms);
+                readInt (sc, "request_burst_slack_ms",  SceneCfg::request_burst_slack_ms);
+                readInt (sc, "am_switch_duration_ms",   SceneCfg::am_switch_duration_ms);
+                readInt (sc, "touch_duration_ms",       SceneCfg::touch_duration_ms);
+                readInt (sc, "load_sample_interval_ms", SceneCfg::load_sample_interval_ms);
+                readInt (sc, "screen_poll_interval_ms", SceneCfg::screen_poll_interval_ms);
+                readBool(sc, "touch_enable",            SceneCfg::touch_enable);
+                readInt (sc, "input_dev_max",           SceneCfg::input_dev_max);
+            } catch (...) {}
+
+            // AppProfile
+            try {
+                auto& ap = F["AppProfile"];
+                readBool(ap, "enable", AppProfile::enable);
+            } catch (...) {}
+
+            // NetlinkScreen
+            try {
+                auto& nl = F["NetlinkScreen"];
+                readBool(nl, "enable",           NetlinkCfg::enable);
+                readInt (nl, "fallback_poll_ms", NetlinkCfg::fallback_poll_ms);
+            } catch (...) {}
+        } catch (const qlib::exception& e) {
+            logger.Warn("Function 节点异常: %s", e.what());
+        }
+    }
+
+    void parseBlacklist() {
+        try {
+            auto& bl = json["package_blacklist"];
+            int n = 0;
+            for (int i = 0; i < AppProfile::MAX_BLACKLIST; i++) {
+                try {
+                    string_t pkg = bl.array()[i].get<string_t>();
+                    if (pkg.empty()) break;
+                    AppProfile::packageBlacklist[n++] = pkg;
+                } catch (...) { break; }
+            }
+            AppProfile::blacklistCount = n;
+            if (n > 0) logger.Info("包名黑名单已加载: %d 条", n);
+        } catch (...) { logger.Debug("无 package_blacklist"); }
+    }
+
+    void parseModels() {
+        try {
+            auto& arr = json["models"];
+            int n = 0;
+            for (int m = 0; m < AppProfile::MAX_MODELS; m++) {
+                try {
+                    auto& node = arr.array()[m];
+                    string_t mName;
+                    readStr(node, "model_name", mName);
+                    if (mName.empty()) break;
+                    parseModelNode(node, AppProfile::Models[n]);
+                    logger.Info("模型已加载: %s (mode=%s, 包名=%d, isGame=%d, c0=[%s,%s])",
+                                AppProfile::Models[n].modelName.c_str(),
+                                AppProfile::Models[n].modeName.c_str(),
+                                AppProfile::Models[n].packageCount,
+                                AppProfile::Models[n].isGame ? 1 : 0,
+                                AppProfile::Models[n].MinFreq[0].c_str(),
+                                AppProfile::Models[n].MaxFreq[0].c_str());
+                    n++;
+                } catch (...) { break; }
+            }
+            AppProfile::modelCount = n;
+            logger.Info("共加载 %d 个模型", n);
+        } catch (...) { logger.Debug("无 models 节点"); }
+    }
+
+    // 从 models 中找 mode 匹配的基础模型，填充 Performances + GpuFreq + schedParam[] + Scenes
+    void applyBaseModel() {
+        baseModelIdx = -1;
+        for (int i = 0; i < AppProfile::modelCount; i++) {
+            if (AppProfile::Models[i].modeName == mode.c_str()) {
+                baseModelIdx = i;
+                break;
+            }
+        }
+
+        if (baseModelIdx < 0) {
+            logger.Error("models 中找不到 mode='%s' 的基础模型 — 无法应用配置", mode.c_str());
+            return;
+        }
+
+        const auto& m = AppProfile::Models[baseModelIdx];
+        for (int i = 0; i <= 3; i++) {
+            Performances::MinFreq[i]     = m.MinFreq[i];
+            Performances::MaxFreq[i]     = m.MaxFreq[i];
+            Performances::CpuGovernor[i] = m.Governor[i];
+            if (!Performances::MinFreq[i].empty() ||
+                !Performances::MaxFreq[i].empty() ||
+                !Performances::CpuGovernor[i].empty()) {
+                logger.Info("CPU簇 %d: min=%s max=%s gov=%s",
+                            Policy::CpuPolicy[i],
+                            Performances::MinFreq[i].c_str(),
+                            Performances::MaxFreq[i].c_str(),
+                            Performances::CpuGovernor[i].c_str());
+            }
+        }
+        for (int i = 0; i <= 7; i++)
+            Performances::Online[i] = m.Online[i];
+
+        // SchedParam 拷贝到全局 schedParam[]
+        for (int i = 0; i <= 3; i++) {
+            int cnt = m.SchedParamCount[i];
+            for (int j = 0; j < cnt && j < 23; j++) {
+                // schedParam[].Name/Value 是 1-indexed（历史原因）
+                schedParam[i].Name [j+1] = m.SchedParamName [i][j];
+                schedParam[i].Value[j+1] = m.SchedParamValue[i][j];
+            }
+        }
+        GpuFreq::min_freq = m.GpuMinFreq;
+        GpuFreq::max_freq = m.GpuMaxFreq;
+        logger.Info("基础模型: %s (mode=%s)", m.modelName.c_str(), mode.c_str());
+
+        // ---- Scenes（场景频率覆盖）从基础模型的 Scenes 字段读取 ----
+        try {
+            auto& sceneRoot = json["models"].array()[baseModelIdx]["Scenes"];
+            parseScenesNode(sceneRoot);
+        } catch (...) { logger.Debug("基础模型无 Scenes 节点"); }
     }
 };

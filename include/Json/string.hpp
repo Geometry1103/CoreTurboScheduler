@@ -199,9 +199,6 @@ public:
     NODISCARD INLINE constexpr size_type size() const noexcept { return _size; }
 
     NODISCARD INLINE constexpr self substr(size_type pos, size_type n = npos) const noexcept {
-        // if (unlikely(pos > size())) {
-        //     return self();
-        // }
         size_type len = (n == npos || pos + n > size()) ? size() - pos : n;
         return self(data() + pos, data() + pos + len);
     }
@@ -299,16 +296,11 @@ protected:
         copy(begin, end, _impl);
         _impl[size] = '\0';
         _size = size;
-        // }
     }
 
     template <class Iter1, class Iter2>
     INLINE constexpr void _assign(Iter1 begin, Iter2 end) {
         const size_type size = distance(begin, end);
-        // Fix: assigning "" to an unallocated string_t (_impl==nullptr, _capacity==0)
-        // caused `_impl[0] = '\0'` → null pointer write → SIGSEGV.
-        // When size==0 there is nothing to copy and no null-terminator to write;
-        // data()/c_str() already return "" when _impl is nullptr, so just update _size.
         if (size == 0u) {
             _size = 0u;
             return;
@@ -469,21 +461,23 @@ public:
         return static_cast<view_type>(*this).ends_with(o);
     }
 
-    NODISCARD INLINE constexpr bool_t operator==(view_type o) const noexcept {
-        return size() == o.size() && equal(begin(), end(), o.begin());
+    // ====================================================================
+    // 修复：使用对称的友元 operator== / operator!= 消除 C++20 二义性
+    // ====================================================================
+    NODISCARD friend INLINE constexpr bool_t operator==(self const& a, self const& b) noexcept {
+        return a.size() == b.size() && equal(a.begin(), b.end(), b.begin());
     }
 
-    template <class T>
-    NODISCARD INLINE constexpr bool_t operator!=(T o) const noexcept {
-        return !(*this == o);
+    NODISCARD friend INLINE constexpr bool_t operator!=(self const& a, self const& b) noexcept {
+        return !(a == b);
     }
+    // ====================================================================
 
     INLINE CONSTEXPR void clear() noexcept { _size = 0u; }
 
     template <class Iter1, class Iter2>
     INLINE void emplace(Iter1 __begin, Iter2 __end) noexcept {
         const size_type __size = distance(__begin, __end);
-        // if (likely(__size > 0u)) {
         const size_type __new_size = size() + __size;
         if (unlikely(__new_size > capacity())) {
             _allocator().template deallocate<Char>(_impl, _capacity);
@@ -496,7 +490,6 @@ public:
         copy(__begin, __end, end());
         _impl[__new_size] = '\0';
         _size = __new_size;
-        // }
     }
 
     INLINE self& operator<<(Char ch) {

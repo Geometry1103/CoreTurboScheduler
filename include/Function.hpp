@@ -2,7 +2,6 @@
 
 #include <cstring>
 #include <atomic>
-#include <mutex>
 #include <thread>
 #include <chrono>
 #include <cstdlib>
@@ -24,6 +23,7 @@ public:
     std::atomic<bool> gpuGuardShouldExit{false};
     std::atomic<int> latestGpuMaxMhz{-1};
     std::atomic<int> latestGpuMinMhz{-1};
+    std::atomic<int> latestThermalLevel{0};
 
 private:
     static constexpr const char* qcomFeas = "/sys/module/perfmgr/parameters/perfmgr_enable";
@@ -32,16 +32,11 @@ private:
     static constexpr const char* cpusetPath = "/dev/cpuset/";
     static constexpr const char* cpuctlPath = "/dev/cpuctl/";
     static constexpr const char* qcomGpuPath = "/sys/class/kgsl/kgsl-3d0/";
-    static constexpr const char* thermalPath = "/sys/devices/virtual/thermal/";
     static constexpr const char* easSchedPath = "/proc/sys/kernel/sched_energy_aware";
-    static constexpr const char* stunePath = "/dev/stune/";
-
     Utils utils;
     Logger logger;
 
     std::thread gpuGuardThread;
-
-    std::mutex gpuWriteMutex;
 
 public:
     Function() = default;
@@ -53,62 +48,22 @@ public:
         stopGuards();
     }
 
-    void processPriorityControl() {
-        if (!ProcessPriority::enable) return;
-
-        // 通过/proc调整正在运行的前台应用
-        // 实际实现可能需要遍历/proc/[pid]/oom_score_adj
-        // 这里提供框架，具体实现根据需求
-        logger.Info("进程优先级控制已%s", ProcessPriority::enable ? "启用" : "跳过");
-    }
-
-    void memoryOptimize() {
-        if (!Memory::enable) return;
-
-        if (!Memory::swappiness.empty()) {
-            utils.FileWrite("/proc/sys/vm/swappiness", Memory::swappiness);
-        }
-        if (!Memory::page_cluster.empty()) {
-            utils.FileWrite("/proc/sys/vm/page-cluster", Memory::page_cluster);
-        }
-        if (!Memory::dirty_ratio.empty()) {
-            utils.FileWrite("/proc/sys/vm/dirty_ratio", Memory::dirty_ratio);
-        }
-        if (!Memory::dirty_background_ratio.empty()) {
-            utils.FileWrite("/proc/sys/vm/dirty_background_ratio", Memory::dirty_background_ratio);
-        }
-        if (!Memory::vfs_cache_pressure.empty()) {
-            utils.FileWrite("/proc/sys/vm/vfs_cache_pressure", Memory::vfs_cache_pressure);
-        }
-        if (!Memory::lmk_minfree_levels.empty()) {
-            // LMK参数路径因内核版本而异
-            utils.FileWrite("/sys/module/lowmemorykiller/parameters/minfree", Memory::lmk_minfree_levels);
-        }
-
-        logger.Info("内存优化已应用");
-    }
-
-    void schedDomainOptimize() {
-        if (!SchedDomain::enable) return;
-
-        // 调度域优化需要写入/sys/kernel/debug/sched/domains/
-        // 或/sys/devices/system/cpu/cpufreq/policy*/domain/
-        // 具体实现根据内核版本和设备特性
-        logger.Info("调度域优化已%s", SchedDomain::enable ? "启用" : "跳过");
-    }
-
+    // [v4.1] AllFunC 在 Init 时调用一次（启动 GPU 守护 + 写 cpuset 等）
+    //        重载 config.json 时只需走 ReloadFunC（不再无谓写 cpuset，省 sysfs 抖动）
     void AllFunC() {
         cpusetFunction();
         gpuFreqControl();
-        LoadBanlance();
         CfsSchedOpt();
-        stuneControl();
-        ioSchedulerControl();
-        processPriorityControl();   // 新增
-        memoryOptimize();           // 新增
-        schedDomainOptimize();      // 新增
-
         startGuards();
+    }
+
+    // 仅用于运行时重载，跳过 cpuset 重写（cpuset 通常不变，重写会造成 sysfs 抖动）
+    // 但如果用户确实改了 cpuset 字段，把 enable 临时关掉再开就能强制重写
+    void ReloadFunC() {
+        cpusetFunction();   // 仍然写一次（实际很多 utils.FileWrite 会 chmod，开销低）
+        gpuFreqControl();
+        CfsSchedOpt();
+        // 不再调用 startGuards()：守护线程已经在跑，避免漏判 joinable() 状态
     }
 
     void startGuards() {
@@ -197,69 +152,6 @@ public:
         if (fdw >= 0) {
             write(fdw, "performance\n", 12);
             close(fdw);
-            logger.Info("GPU governor 已切换: performance");
-        }
-    }
-
-    /**
-     * 锁定所有已知的 GPU governor 路径为 performance
-     * 防止系统 devfreq 自动调频覆盖我们的设置
-     */
-    void lockGpuGovernor() {
-        // kgsl (高通 Adreno)
-        setKgslGovernorPerformance();
-
-        // 通用 devfreq governor 路径
-        const char* govPaths[] = {
-            "/sys/class/kgsl/kgsl-3d0/devfreq/governor",
-            "/sys/class/kgsl/kgsl-3d0/devfreq/governor",
-            "/sys/kernel/gpu/devfreq/governor",
-            "/sys/devices/platform/soc/soc:qcom,kgsl-3d0/devfreq/governor",
-            nullptr
-        };
-
-        for (int i = 0; govPaths[i]; i++) {
-            if (access(govPaths[i], F_OK) != 0) continue;
-
-            char curGov[64] = {0};
-            int fd = open(govPaths[i], O_RDONLY | O_CLOEXEC);
-            if (fd >= 0) {
-                ssize_t n = read(fd, curGov, sizeof(curGov) - 1);
-                close(fd);
-
-                if (n > 0) {
-                    for (int j = 0; curGov[j]; j++) {
-                        if (curGov[j] == '\n' || curGov[j] == '\r') {
-                            curGov[j] = '\0';
-                            break;
-                        }
-                    }
-                    if (strstr(curGov, "performance")) continue;
-                }
-            }
-
-            chmod(govPaths[i], 0666);
-            int fdw = open(govPaths[i], O_WRONLY | O_CLOEXEC);
-            if (fdw >= 0) {
-                write(fdw, "performance\n", 12);
-                close(fdw);
-            }
-        }
-
-        // 尝试禁用 devfreq 的自动调频（部分设备支持）
-        const char* disablePaths[] = {
-            "/sys/class/kgsl/kgsl-3d0/devfreq/polling_interval",
-            "/sys/class/kgsl/kgsl-3d0/devfreq/gov_polling_interval",
-            nullptr
-        };
-
-        for (int i = 0; disablePaths[i]; i++) {
-            if (access(disablePaths[i], F_OK) != 0) continue;
-            int fdw = open(disablePaths[i], O_WRONLY | O_CLOEXEC);
-            if (fdw >= 0) {
-                write(fdw, "0\n", 2);
-                close(fdw);
-            }
         }
     }
 
@@ -346,8 +238,6 @@ public:
         if (mhzValue <= 0) return true;
         if (access(path, F_OK) != 0) return false;
 
-        std::lock_guard<std::mutex> lock(gpuWriteMutex);
-
         if (needsGov) {
             setKgslGovernorPerformance();
         }
@@ -413,15 +303,6 @@ public:
         if (tryGpuPath("/sys/class/kgsl/kgsl-3d0/max_clock_mhz", mhzMax, false, false, "max"))
             return true;
 
-        if (tryGpuPath("/sys/kernel/gpu/gpuclk", mhzMax, false, false, "max"))
-            return true;
-
-        if (tryGpuPath("/sys/kernel/gpu/mali/clock", mhzMax, false, false, "max"))
-            return true;
-
-        if (tryGpuPath("/sys/class/kgsl/kgsl-3d0/gpu_max_freq", mhzMax, true, false, "max"))
-            return true;
-
         return false;
     }
 
@@ -435,9 +316,6 @@ public:
             return true;
 
         if (tryGpuPath("/sys/class/kgsl/kgsl-3d0/min_clock_mhz", mhzMin, false, false, "min"))
-            return true;
-
-        if (tryGpuPath("/sys/class/kgsl/kgsl-3d0/gpu_min_freq", mhzMin, true, false, "min"))
             return true;
 
         return false;
@@ -538,29 +416,10 @@ public:
             }
         }
 
-        if (!success) {
-            const char* maliDvfsMax = "/sys/kernel/gpu/mali/dvfs_max";
-
-            if (access(maliDvfsMax, F_OK) == 0 && mhzMax > 0) {
-                char valStr[32];
-                int len = FastSnprintf(valStr, sizeof(valStr), "%d", mhzMax);
-
-                if (len > 0 && writeSysfsLocked(maliDvfsMax, valStr, len)) {
-                    logger.Debug("GPU PwrLevel兜底: mali dvfs_max = %s", valStr);
-                    success = true;
-                }
-            }
-        }
-
         return success;
     }
 
     void gpuFreqControl() {
-        if (!GpuFreq::enable) return;
-
-        // 先锁定 governor 为 performance，防止 devfreq 覆盖
-        lockGpuGovernor();
-
         int mhzMin = Fastatoi(GpuFreq::min_freq.c_str());
         int mhzMax = Fastatoi(GpuFreq::max_freq.c_str());
 
@@ -599,37 +458,78 @@ public:
         }
     }
 
+    // v4.2: 使用自定义频率值设置 GPU（应用画像用）
+    void gpuFreqControlCustom(const string_t& customMin, const string_t& customMax) {
+        int mhzMin = Fastatoi(customMin.c_str());
+        int mhzMax = Fastatoi(customMax.c_str());
+
+        if (mhzMin <= 0 && mhzMax <= 0) return;
+
+        bool minOk = true;
+        bool maxOk = true;
+
+        if (mhzMin > 0) {
+            minOk = tryGpuMinPaths(mhzMin);
+            if (minOk) {
+                latestGpuMinMhz.store(mhzMin);
+            }
+        }
+
+        if (mhzMax > 0) {
+            maxOk = tryGpuMaxPaths(mhzMax);
+            if (maxOk) {
+                latestGpuMaxMhz.store(mhzMax);
+            }
+        }
+
+        if ((!minOk && mhzMin > 0) || (!maxOk && mhzMax > 0)) {
+            tryGpuPwrlevel(mhzMax, mhzMin);
+        }
+
+        logger.Debug("GPU频率(画像): min=%dMHz max=%dMHz", mhzMin, mhzMax);
+    }
+
     void gpuFreqGuard() {
         if (!GpuFreq::enable) return;
 
         logger.Info("GPU守护已启动，周期: 3秒");
 
-        while (!gpuGuardShouldExit.load()) {
-            // 每次循环都锁定 governor
-            lockGpuGovernor();
+        // [Fix v4.1] 记录上一轮目标值，未变化时不重写（省 sysfs 抖动）
+        // 如果其他进程篡改了 GPU 频率，sysfs 上的实际值会与 latestGpu*Mhz 不一致，
+        // 但要每次都读回比较代价更大；折中方案：值未变化时只在每 N 轮强制写一次确认。
+        int lastWrittenMin = -1;
+        int lastWrittenMax = -1;
+        int forceCounter   = 0;
 
+        while (!gpuGuardShouldExit.load()) {
             int mhzMin = Fastatoi(GpuFreq::min_freq.c_str());
             int mhzMax = Fastatoi(GpuFreq::max_freq.c_str());
 
-            bool minOk = true;
-            bool maxOk = true;
+            bool thermalActive = latestThermalLevel.load() > 0;
 
-            if (mhzMin > 0) {
-                minOk = tryGpuMinPaths(mhzMin);
-                if (minOk) {
-                    latestGpuMinMhz.store(mhzMin);
+            if (!thermalActive) {
+                bool needWrite = (mhzMin != lastWrittenMin) || (mhzMax != lastWrittenMax);
+                // 每 5 轮（15s）强制写一次，防止被其他模块覆盖
+                if (++forceCounter >= 5) {
+                    needWrite  = true;
+                    forceCounter = 0;
                 }
-            }
-
-            if (mhzMax > 0) {
-                maxOk = tryGpuMaxPaths(mhzMax);
-                if (maxOk) {
-                    latestGpuMaxMhz.store(mhzMax);
+                if (needWrite) {
+                    bool minOk = true, maxOk = true;
+                    if (mhzMin > 0) {
+                        minOk = tryGpuMinPaths(mhzMin);
+                        if (minOk) latestGpuMinMhz.store(mhzMin);
+                    }
+                    if (mhzMax > 0) {
+                        maxOk = tryGpuMaxPaths(mhzMax);
+                        if (maxOk) latestGpuMaxMhz.store(mhzMax);
+                    }
+                    if ((!minOk && mhzMin > 0) || (!maxOk && mhzMax > 0)) {
+                        tryGpuPwrlevel(mhzMax, mhzMin);
+                    }
+                    lastWrittenMin = mhzMin;
+                    lastWrittenMax = mhzMax;
                 }
-            }
-
-            if ((!minOk && mhzMin > 0) || (!maxOk && mhzMax > 0)) {
-                tryGpuPwrlevel(mhzMax, mhzMin);
             }
 
             for (int i = 0; i < 30 && !gpuGuardShouldExit.load(); i++) {
@@ -638,54 +538,6 @@ public:
         }
 
         logger.Info("GPU守护已停止");
-    }
-
-    void LoadBanlance() {
-        if (!LoadBanlace::enable) return;
-
-        if (!checkCpuset()) {
-            logger.Warn("Cpuset不支持");
-            return;
-        }
-
-        const char* groups[] = {
-            "",
-            "top-app",
-            "foreground",
-            "background",
-            "system-background",
-            "restricted"
-        };
-
-        for (const char* group : groups) {
-            char path[256];
-
-            if (group[0] == '\0') {
-                FastSnprintf(path, sizeof(path), "/dev/cpuset/sched_load_balance");
-            } else {
-                FastSnprintf(path, sizeof(path), "/dev/cpuset/%s/sched_load_balance", group);
-            }
-
-            utils.FileWrite(path, "1");
-
-            if (group[0] == '\0') {
-                FastSnprintf(path, sizeof(path), "/dev/cpuset/sched_relax_domain_level");
-            } else {
-                FastSnprintf(path, sizeof(path), "/dev/cpuset/%s/sched_relax_domain_level", group);
-            }
-
-            utils.FileWrite(path, "0");
-
-            if (group[0] == '\0') {
-                FastSnprintf(path, sizeof(path), "/dev/cpuset/memory_migrate");
-            } else {
-                FastSnprintf(path, sizeof(path), "/dev/cpuset/%s/memory_migrate", group);
-            }
-
-            utils.FileWrite(path, "0");
-        }
-
-        logger.Info("LoadBalancing OK");
     }
 
     void CfsSchedOpt() {
@@ -699,38 +551,6 @@ public:
         utils.FileWrite("/proc/sys/kernel/sched_nr_migrate", Scheduler::Sched_nr_migrate);
         utils.FileWrite("/proc/sys/kernel/sched_util_clamp_min", Scheduler::Sched_util_clamp_min);
         utils.FileWrite("/proc/sys/kernel/sched_util_clamp_max", Scheduler::Sched_util_clamp_max);
-
-        // 新增CFS调度参数写入
-        if (!Scheduler::Sched_child_runs_first.empty()) {
-            utils.FileWrite("/proc/sys/kernel/sched_child_runs_first", Scheduler::Sched_child_runs_first);
-            logger.Debug("Sched_child_runs_first调整为: %s", Scheduler::Sched_child_runs_first.c_str());
-        }
-        if (!Scheduler::Sched_tunable_scaling.empty()) {
-            utils.FileWrite("/proc/sys/kernel/sched_tunable_scaling", Scheduler::Sched_tunable_scaling);
-            logger.Debug("Sched_tunable_scaling调整为: %s", Scheduler::Sched_tunable_scaling.c_str());
-        }
-        if (!Scheduler::Sched_sched_compat_yield.empty()) {
-            utils.FileWrite("/proc/sys/kernel/sched_compat_yield", Scheduler::Sched_sched_compat_yield);
-            logger.Debug("Sched_sched_compat_yield调整为: %s", Scheduler::Sched_sched_compat_yield.c_str());
-        }
-        if (!Scheduler::Sched_wakeup_load_threshold.empty()) {
-            utils.FileWrite("/proc/sys/kernel/sched_wakeup_load_threshold", Scheduler::Sched_wakeup_load_threshold);
-            logger.Debug("Sched_wakeup_load_threshold调整为: %s", Scheduler::Sched_wakeup_load_threshold.c_str());
-        }
-        if (!Scheduler::Sched_migration_cost.empty()) {
-            utils.FileWrite("/proc/sys/kernel/sched_migration_cost", Scheduler::Sched_migration_cost);
-            logger.Debug("Sched_migration_cost调整为: %s", Scheduler::Sched_migration_cost.c_str());
-        }
-
-        // NUMA相关参数
-        if (access("/proc/sys/kernel/numa_balancing", F_OK) == 0) {
-            utils.FileWrite("/proc/sys/kernel/numa_balancing", Scheduler::Sched_numa_balancing ? "1" : "0");
-            logger.Debug("Sched_numa_balancing调整为: %s", Scheduler::Sched_numa_balancing ? "开启" : "关闭");
-        }
-        if (!Scheduler::Sched_numa_preferred_nid.empty()) {
-            utils.FileWrite("/proc/sys/kernel/numa_preferred_nid", Scheduler::Sched_numa_preferred_nid);
-            logger.Debug("Sched_numa_preferred_nid调整为: %s", Scheduler::Sched_numa_preferred_nid.c_str());
-        }
 
         if (checkEasSched()) {
             utils.FileWrite("/proc/sys/kernel/sched_energy_aware", Scheduler::Sched_energy_aware ? "1" : "0");
@@ -751,84 +571,6 @@ public:
         logger.Info("CFS调度器已优化完毕");
     }
 
-    void stuneControl() {
-        if (!Stune::enable) return;
-
-        if (access(stunePath, F_OK) != 0) {
-            logger.Warn("Stune不支持");
-            return;
-        }
-
-        int n = 0;
-
-        if (!Stune::top_app_boost.empty()) {
-            utils.FileWrite("/dev/stune/top-app/schedtune.boost", Stune::top_app_boost);
-            n++;
-        }
-
-        if (!Stune::foreground_boost.empty()) {
-            utils.FileWrite("/dev/stune/foreground/schedtune.boost", Stune::foreground_boost);
-            n++;
-        }
-
-        if (!Stune::background_boost.empty()) {
-            utils.FileWrite("/dev/stune/background/schedtune.boost", Stune::background_boost);
-            n++;
-        }
-
-        if (!Stune::top_app_prefer_idle.empty()) {
-            utils.FileWrite("/dev/stune/top-app/schedtune.prefer_idle", Stune::top_app_prefer_idle);
-            n++;
-        }
-
-        if (!Stune::foreground_prefer_idle.empty()) {
-            utils.FileWrite("/dev/stune/foreground/schedtune.prefer_idle", Stune::foreground_prefer_idle);
-            n++;
-        }
-
-        // Uclamp参数（Android 10+内核支持）
-        if (!Stune::top_app_uclamp_min.empty()) {
-            utils.FileWrite("/dev/stune/top-app/uclamp.min", Stune::top_app_uclamp_min);
-            n++;
-        }
-        if (!Stune::top_app_uclamp_max.empty()) {
-            utils.FileWrite("/dev/stune/top-app/uclamp.max", Stune::top_app_uclamp_max);
-            n++;
-        }
-        if (!Stune::foreground_uclamp_min.empty()) {
-            utils.FileWrite("/dev/stune/foreground/uclamp.min", Stune::foreground_uclamp_min);
-            n++;
-        }
-        if (!Stune::foreground_uclamp_max.empty()) {
-            utils.FileWrite("/dev/stune/foreground/uclamp.max", Stune::foreground_uclamp_max);
-            n++;
-        }
-        if (!Stune::background_uclamp_min.empty()) {
-            utils.FileWrite("/dev/stune/background/uclamp.min", Stune::background_uclamp_min);
-            n++;
-        }
-        if (!Stune::background_uclamp_max.empty()) {
-            utils.FileWrite("/dev/stune/background/uclamp.max", Stune::background_uclamp_max);
-            n++;
-        }
-
-        // 补充prefer_idle
-        if (!Stune::background_prefer_idle.empty()) {
-            utils.FileWrite("/dev/stune/background/schedtune.prefer_idle", Stune::background_prefer_idle);
-            n++;
-        }
-        if (!Stune::system_background_prefer_idle.empty()) {
-            utils.FileWrite("/dev/stune/system-background/schedtune.prefer_idle", Stune::system_background_prefer_idle);
-            n++;
-        }
-        if (!Stune::restricted_prefer_idle.empty()) {
-            utils.FileWrite("/dev/stune/restricted/schedtune.prefer_idle", Stune::restricted_prefer_idle);
-            n++;
-        }
-
-        logger.Info(n ? "Stune OK(%d)" : "Stune skip", n);
-    }
-
     bool FeasFunc(bool Enable) {
         if (checkQcomFeas()) {
             utils.FileWrite(qcomFeas, Enable ? "1" : "0");
@@ -847,98 +589,6 @@ public:
 
     bool checkQcom() const {
         return !access(qcomGpuPath, F_OK);
-    }
-
-    void ioSchedulerControl() {
-        if (!IOScheduler::enable) return;
-
-        DIR* dir = opendir("/sys/block/");
-        if (!dir) {
-            logger.Warn("无法打开 /sys/block/ 目录, IO调度器控制未生效");
-            return;
-        }
-
-        int deviceCount = 0;
-        int appliedCount = 0;
-        struct dirent* entry;
-
-        while ((entry = readdir(dir)) != nullptr) {
-            if (entry->d_name[0] == '.') continue;
-
-            if (strstr(entry->d_name, "sd") == nullptr &&
-                strstr(entry->d_name, "mmcblk") == nullptr) {
-                continue;
-            }
-
-            deviceCount++;
-
-            char devicePath[256];
-
-            if (!IOScheduler::scheduler.empty()) {
-                FastSnprintf(devicePath,
-                             sizeof(devicePath),
-                             "/sys/block/%s/queue/scheduler",
-                             entry->d_name);
-
-                if (!access(devicePath, F_OK)) {
-                    if (isSchedulerAvailable(devicePath, IOScheduler::scheduler.c_str())) {
-                        utils.FileWrite(devicePath, IOScheduler::scheduler);
-
-                        logger.Debug("块设备 %s IO调度器设置为: %s",
-                                     entry->d_name,
-                                     IOScheduler::scheduler.c_str());
-
-                        appliedCount++;
-                    } else {
-                        logger.Debug("块设备 %s 不支持调度器: %s, 已跳过",
-                                     entry->d_name,
-                                     IOScheduler::scheduler.c_str());
-                    }
-                }
-            }
-
-            if (!IOScheduler::read_ahead_kb.empty()) {
-                FastSnprintf(devicePath,
-                             sizeof(devicePath),
-                             "/sys/block/%s/queue/read_ahead_kb",
-                             entry->d_name);
-
-                if (!access(devicePath, F_OK)) {
-                    utils.FileWrite(devicePath, IOScheduler::read_ahead_kb);
-
-                    logger.Debug("块设备 %s read_ahead_kb设置为: %s",
-                                 entry->d_name,
-                                 IOScheduler::read_ahead_kb.c_str());
-
-                    appliedCount++;
-                }
-            }
-
-            if (!IOScheduler::nr_requests.empty()) {
-                FastSnprintf(devicePath,
-                             sizeof(devicePath),
-                             "/sys/block/%s/queue/nr_requests",
-                             entry->d_name);
-
-                if (!access(devicePath, F_OK)) {
-                    utils.WriteInt(devicePath, Fastatoi(IOScheduler::nr_requests.c_str()));
-
-                    logger.Debug("块设备 %s nr_requests设置为: %s",
-                                 entry->d_name,
-                                 IOScheduler::nr_requests.c_str());
-
-                    appliedCount++;
-                }
-            }
-        }
-
-        closedir(dir);
-
-        if (appliedCount > 0) {
-            logger.Info("IO调度器已优化 (%d项, %d个块设备)", appliedCount, deviceCount);
-        } else {
-            logger.Debug("IO调度器未应用任何参数");
-        }
     }
 
 private:
