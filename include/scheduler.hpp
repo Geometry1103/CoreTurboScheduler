@@ -75,9 +75,10 @@ public:
 
     void FreqWriter(const int Policy, const string_t MinFreq, const string_t MaxFreq, const string_t Governor) {
         // 找到 Policy 对应的簇索引（c0..c3）做缓存比较
+        // 注：参数名 Policy 在此作用域内会遮蔽 Config::Policy 命名空间，必须完全限定。
         int cluster = -1;
         for (int i = 0; i <= 3; i++) {
-            if (Policy::CpuPolicy[i] == Policy) { cluster = i; break; }
+            if (Config::Policy::CpuPolicy[i] == Policy) { cluster = i; break; }
         }
         if (cluster >= 0 &&
             lastMinFreq[cluster]  == MinFreq &&
